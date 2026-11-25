@@ -1,0 +1,16 @@
+[package]
+name = "bwsc-cli"
+description = "Linha de comando do BWSmartClips"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bwsmartclips"
+path = "src/main.rs"
+
+[dependencies]
+bwsc-core = { path = "../bwsc-core" }
+anyhow.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }

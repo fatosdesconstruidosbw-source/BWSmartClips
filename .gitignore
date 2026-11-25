@@ -1,0 +1,5 @@
+/target
+/src-tauri/gen/schemas
+*.part
+.DS_Store
+Thumbs.db

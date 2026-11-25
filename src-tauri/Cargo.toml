@@ -1,0 +1,19 @@
+[package]
+name = "bwsmartclips-app"
+description = "BWSmartClips — app desktop de cortes virais"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "bwsmartclips-app"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+bwsc-core = { path = "../crates/bwsc-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"

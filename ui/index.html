@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BWSmartClips</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo"><span></span></div>
+      <div>
+        <h1>BWSmartClips</h1>
+        <p>Cortes virais com IA · feito em Rust</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="ghost" id="btn-projects">Projetos</button>
+      <button class="ghost" id="btn-settings">⚙ Configurações</button>
+    </div>
+  </header>
+
+  <div id="tools-banner" class="banner hidden">
+    <div>
+      <strong>Faltam ferramentas:</strong> <span id="tools-missing"></span>
+    </div>
+    <button id="btn-banner-install">Instalar ferramentas</button>
+  </div>
+
+  <main>
+    <section class="card new-job">
+      <h2>Novo projeto</h2>
+      <div class="source-row">
+        <input id="source" type="text" placeholder="Cole um link do YouTube ou escolha um arquivo de vídeo…" spellcheck="false" />
+        <button class="secondary" id="btn-pick">📁 Escolher arquivo</button>
+      </div>
+
+      <div class="grid opts">
+        <label>Nº de cortes
+          <input id="opt-count" type="number" min="1" max="30" />
+        </label>
+        <label>Duração mínima (s)
+          <input id="opt-min" type="number" min="5" max="300" />
+        </label>
+        <label>Duração máxima (s)
+          <input id="opt-max" type="number" min="10" max="600" />
+        </label>
+        <label>Idioma do vídeo
+          <select id="opt-lang">
+            <option value="pt">Português</option>
+            <option value="en">Inglês</option>
+            <option value="es">Espanhol</option>
+            <option value="">Detectar automaticamente</option>
+          </select>
+        </label>
+        <label>Formato
+          <select id="opt-reframe">
+            <option value="face">9:16 · seguir rosto</option>
+            <option value="center">9:16 · centro</option>
+            <option value="blur">9:16 · fundo desfocado</option>
+            <option value="original">Formato original</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="block"><span>O que a IA deve procurar? <span class="muted">(opcional)</span></span>
+        <input id="opt-focus" type="text" placeholder="ex.: momentos engraçados, dicas práticas, histórias pessoais…" />
+      </label>
+
+      <details class="captions">
+        <summary>
+          <label class="switch" onclick="event.stopPropagation()"><input id="cap-enabled" type="checkbox" /><span></span></label>
+          Legendas animadas
+          <span class="cap-preview" id="cap-preview"><b>ISSO</b> <i>AQUI</i> <b>É</b></span>
+        </summary>
+        <div class="grid caps">
+          <label>Cor do texto <input id="cap-color" type="color" /></label>
+          <label>Cor de destaque <input id="cap-highlight" type="color" /></label>
+          <label>Cor do contorno <input id="cap-outline-color" type="color" /></label>
+          <label>Tamanho <input id="cap-size" type="number" min="30" max="160" /></label>
+          <label>Palavras por vez <input id="cap-words" type="number" min="1" max="8" /></label>
+          <label>Posição
+            <select id="cap-position">
+              <option value="bottom">Embaixo</option>
+              <option value="middle">Meio</option>
+              <option value="top">Em cima</option>
+            </select>
+          </label>
+          <label class="check"><input id="cap-upper" type="checkbox" /> MAIÚSCULAS</label>
+          <label class="check"><input id="cap-pop" type="checkbox" /> Efeito "pulo"</label>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="primary" id="btn-start">✨ Gerar cortes</button>
+        <button class="link" id="btn-save-defaults">Salvar estas opções como padrão</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="progress-card">
+      <div class="progress-head">
+        <h2 id="progress-title">Processando…</h2>
+        <button class="ghost danger" id="btn-cancel">Cancelar</button>
+      </div>
+      <ol class="stages" id="stages">
+        <li data-stage="download">Download</li>
+        <li data-stage="probe">Leitura</li>
+        <li data-stage="transcribe">Transcrição</li>
+        <li data-stage="analyze">IA</li>
+        <li data-stage="render">Renderização</li>
+      </ol>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <p class="muted" id="progress-msg"></p>
+      <pre class="error hidden" id="progress-error"></pre>
+    </section>
+
+    <section id="results" class="hidden">
+      <div class="results-head">
+        <h2 id="results-title">Cortes</h2>
+        <button class="secondary" id="btn-open-folder">Abrir pasta</button>
+      </div>
+      <div class="clips" id="clips"></div>
+    </section>
+  </main>
+
+  <!-- Projetos -->
+  <div class="modal hidden" id="projects-modal">
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h2>Projetos recentes</h2>
+        <button class="ghost" data-close>✕</button>
+      </div>
+      <div id="projects-list" class="projects"></div>
+    </div>
+  </div>
+
+  <!-- Configurações -->
+  <div class="modal hidden" id="settings-modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>Configurações</h2>
+        <button class="ghost" data-close>✕</button>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="tab-ai">IA</button>
+        <button class="tab" data-tab="tab-transcription">Transcrição</button>
+        <button class="tab" data-tab="tab-tools">Ferramentas</button>
+        <button class="tab" data-tab="tab-output">Saída</button>
+      </div>
+
+      <div class="tab-body" id="tab-ai">
+        <label class="block">Quem escolhe os cortes
+          <select id="s-llm">
+            <option value="anthropic">Claude (Anthropic)</option>
+            <option value="open_ai">OpenAI</option>
+          </select>
+        </label>
+        <fieldset>
+          <legend>Anthropic (Claude)</legend>
+          <label class="block">Chave da API <input id="s-anthropic-key" type="password" placeholder="sk-ant-…" /></label>
+          <div class="grid two">
+            <label>Modelo <input id="s-anthropic-model" type="text" /></label>
+            <label>URL da API <input id="s-anthropic-url" type="text" /></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>OpenAI (ou compatível)</legend>
+          <label class="block">Chave da API <input id="s-openai-key" type="password" placeholder="sk-…" /></label>
+          <div class="grid two">
+            <label>Modelo de chat <input id="s-openai-model" type="text" /></label>
+            <label>URL da API <input id="s-openai-url" type="text" /></label>
+          </div>
+          <p class="muted small">A mesma chave e URL são usadas para a transcrição pela API.</p>
+        </fieldset>
+      </div>
+
+      <div class="tab-body hidden" id="tab-transcription">
+        <label class="block">Motor de transcrição
+          <select id="s-engine">
+            <option value="local">Whisper local (grátis, offline)</option>
+            <option value="open_ai">API OpenAI (rápido, pago)</option>
+          </select>
+        </label>
+        <fieldset>
+          <legend>Whisper local (whisper.cpp)</legend>
+          <label class="block">Modelo
+            <select id="s-whisper-model"></select>
+          </label>
+          <label class="block"><span>Threads <span class="muted">(0 = automático)</span></span>
+            <input id="s-whisper-threads" type="number" min="0" max="64" />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>API</legend>
+          <label class="block">Modelo de transcrição <input id="s-openai-tmodel" type="text" /></label>
+          <p class="muted small">Ex.: <code>whisper-1</code> na OpenAI, ou <code>whisper-large-v3</code> no Groq
+            (URL <code>https://api.groq.com/openai/v1</code>).</p>
+        </fieldset>
+      </div>
+
+      <div class="tab-body hidden" id="tab-tools">
+        <div id="tools-table" class="tools-table"></div>
+        <fieldset>
+          <legend>Instalar / atualizar automaticamente</legend>
+          <label class="block">Modelo do Whisper para baixar
+            <select id="install-model"></select>
+          </label>
+          <div class="actions">
+            <button class="primary" id="btn-install">Instalar o que falta</button>
+            <button class="secondary" id="btn-update">Atualizar tudo</button>
+            <button class="ghost danger hidden" id="btn-install-cancel">Cancelar</button>
+          </div>
+          <div class="bar small hidden" id="install-bar"><div id="install-fill"></div></div>
+          <p class="muted small" id="install-msg"></p>
+        </fieldset>
+        <fieldset>
+          <legend>Caminhos manuais <span class="muted">(deixe vazio para detectar)</span></legend>
+          <div class="path-row"><label>ffmpeg <input id="s-ffmpeg" type="text" /></label><button class="secondary" data-pick="s-ffmpeg">…</button></div>
+          <div class="path-row"><label>ffprobe <input id="s-ffprobe" type="text" /></label><button class="secondary" data-pick="s-ffprobe">…</button></div>
+          <div class="path-row"><label>yt-dlp <input id="s-ytdlp" type="text" /></label><button class="secondary" data-pick="s-ytdlp">…</button></div>
+          <div class="path-row"><label>whisper-cli <input id="s-whisper" type="text" /></label><button class="secondary" data-pick="s-whisper">…</button></div>
+        </fieldset>
+      </div>
+
+      <div class="tab-body hidden" id="tab-output">
+        <div class="path-row"><label>Pasta dos projetos <input id="s-output" type="text" /></label><button class="secondary" id="btn-pick-output">…</button></div>
+        <div class="grid two">
+          <label>Resolução vertical
+            <select id="s-height">
+              <option value="1920">1080 × 1920 (Full HD)</option>
+              <option value="1280">720 × 1280 (mais rápido)</option>
+            </select>
+          </label>
+          <label>Velocidade do encoder
+            <select id="s-preset">
+              <option value="ultrafast">ultrafast</option>
+              <option value="superfast">superfast</option>
+              <option value="veryfast">veryfast</option>
+              <option value="faster">faster</option>
+              <option value="fast">fast</option>
+              <option value="medium">medium</option>
+              <option value="slow">slow (melhor qualidade)</option>
+            </select>
+          </label>
+          <label>Qualidade (CRF, menor = melhor)
+            <input id="s-crf" type="number" min="14" max="32" />
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <span class="muted small" id="settings-status"></span>
+        <button class="primary" id="btn-save-settings">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

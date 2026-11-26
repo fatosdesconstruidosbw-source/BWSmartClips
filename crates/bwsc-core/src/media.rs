@@ -141,8 +141,9 @@ pub fn loudness_profile(ffmpeg: &Path, input: &Path, cancel: &Cancel) -> Result<
             break;
         }
         let samples = filled / 2;
-        let sum: f64 = buf[..samples * 2]
-            .chunks_exact(2)
+        let (pairs, _) = buf[..samples * 2].as_chunks::<2>();
+        let sum: f64 = pairs
+            .iter()
             .map(|b| {
                 let v = i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.0;
                 v * v

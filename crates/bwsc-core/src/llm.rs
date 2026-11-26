@@ -147,6 +147,9 @@ pub fn complete(settings: &Settings, system: &str, prompt: &str) -> Result<Strin
         .timeout(Duration::from_secs(300))
         .build()?;
     match settings.llm_provider {
+        LlmProvider::Local | LlmProvider::Ollama => {
+            bail!("IA local usa o módulo selector/local_ai, não a API de nuvem")
+        }
         LlmProvider::Anthropic => {
             let key = settings.anthropic_api_key.trim();
             if key.is_empty() {

@@ -1,4 +1,7 @@
-//! Instalador das ferramentas externas (Windows): ffmpeg, yt-dlp, Deno, whisper.cpp e modelo.
+//! Instalador: ferramentas (Windows) e modelos de IA (qualquer sistema).
+//!
+//! Tudo é baixado uma única vez para `%LOCALAPPDATA%\BWSmartClips`; depois o app
+//! funciona 100% offline. Também dá para importar modelos de uma pasta/pendrive.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -6,26 +9,73 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{models_dir, tools_dir};
 use crate::process::{Cancel, Cancelled};
 
-pub const WHISPER_MODELS: &[(&str, &str)] = &[
-    ("tiny", "75 MB — muito rápido, precisão baixa"),
-    ("base", "142 MB — rápido"),
-    ("small", "466 MB — bom equilíbrio (recomendado para CPU)"),
-    ("medium", "1,5 GB — mais preciso, lento em CPU"),
-    ("large-v3-turbo-q5_0", "547 MB — muito preciso, exige PC forte"),
+/// Um modelo que o instalador sabe baixar.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ModelInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub file: &'static str,
+    pub url: &'static str,
+    pub size_mb: u64,
+    pub recommended: bool,
+}
+
+#[cfg(test)]
+const HF_WHISPER: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+
+pub const WHISPER_MODELS: &[ModelInfo] = &[
+    ModelInfo { id: "tiny", label: "Tiny — muito rápido, precisão baixa", file: "ggml-tiny.bin", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin", size_mb: 75, recommended: false },
+    ModelInfo { id: "base", label: "Base — rápido", file: "ggml-base.bin", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin", size_mb: 142, recommended: false },
+    ModelInfo { id: "small", label: "Small — bom equilíbrio (recomendado para CPU)", file: "ggml-small.bin", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin", size_mb: 466, recommended: true },
+    ModelInfo { id: "medium", label: "Medium — mais preciso, lento em CPU", file: "ggml-medium.bin", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin", size_mb: 1530, recommended: false },
+    ModelInfo { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo — muito preciso, exige PC forte", file: "ggml-large-v3-turbo-q5_0.bin", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin", size_mb: 547, recommended: false },
 ];
+
+pub const LLM_MODELS: &[ModelInfo] = &[
+    ModelInfo { id: "qwen3.5-2b", label: "Qwen 3.5 2B — o mais rápido, análise mais simples", file: "Qwen_Qwen3.5-2B-Q4_K_M.gguf", url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF/resolve/main/Qwen_Qwen3.5-2B-Q4_K_M.gguf", size_mb: 1400, recommended: false },
+    ModelInfo { id: "qwen3.5-4b", label: "Qwen 3.5 4B — bom equilíbrio (recomendado)", file: "Qwen_Qwen3.5-4B-Q4_K_M.gguf", url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q4_K_M.gguf", size_mb: 3010, recommended: true },
+    ModelInfo { id: "qwen3.5-9b", label: "Qwen 3.5 9B — mais esperto, bem mais lento em CPU", file: "Qwen_Qwen3.5-9B-Q4_K_M.gguf", url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF/resolve/main/Qwen_Qwen3.5-9B-Q4_K_M.gguf", size_mb: 6170, recommended: false },
+];
+
+pub const VAD_MODEL: ModelInfo = ModelInfo {
+    id: "silero",
+    label: "Detector de voz Silero",
+    file: "ggml-silero-v5.1.2.bin",
+    url: "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+    size_mb: 1,
+    recommended: true,
+};
+
+/// Tamanho aproximado das ferramentas (ffmpeg, yt-dlp, Deno, whisper.cpp, llama.cpp).
+pub const TOOLS_SIZE_MB: u64 = 320;
 
 const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 const WHISPER_URL: &str = "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
 const DENO_URL: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+const LLAMA_RELEASES_API: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
 
-pub fn model_url(name: &str) -> String {
-    format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin")
+pub fn whisper_model(id: &str) -> Option<&'static ModelInfo> {
+    WHISPER_MODELS.iter().find(|m| m.id == id)
+}
+pub fn llm_model(id: &str) -> Option<&'static ModelInfo> {
+    LLM_MODELS.iter().find(|m| m.id == id)
+}
+
+/// O que instalar. Ids vazios = não baixar aquele modelo.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InstallRequest {
+    pub whisper_model: String,
+    pub llm_model: String,
+    pub vad: bool,
+    /// Baixa as ferramentas de novo (atualização).
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,66 +86,122 @@ pub struct InstallProgress {
     pub message: String,
 }
 
-/// Baixa e instala tudo o que falta. Com `force`, baixa de novo (atualização).
-pub fn install_tools(
-    model: &str,
-    force: bool,
-    cancel: &Cancel,
-    on_progress: &mut dyn FnMut(InstallProgress),
-) -> Result<()> {
-    if !cfg!(windows) {
-        bail!(
-            "O instalador automático é para Windows. No Linux/macOS instale pelo gerenciador de pacotes: \
-             ffmpeg, yt-dlp e whisper.cpp (whisper-cli), e coloque o modelo ggml em {}",
-            models_dir().display()
-        );
+/// Espaço livre (bytes) no disco onde ficam os dados do app.
+pub fn free_space() -> Option<u64> {
+    let mut dir = models_dir();
+    while !dir.exists() {
+        dir = dir.parent()?.to_path_buf();
     }
-    let tools = tools_dir();
-    let models = models_dir();
-    std::fs::create_dir_all(&tools)?;
-    std::fs::create_dir_all(&models)?;
-    let tmp = tools.join("_download");
-    std::fs::create_dir_all(&tmp)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(3600))
+    fs4::available_space(&dir).ok()
+}
+
+/// Estimativa (MB) do que falta baixar para este pedido.
+pub fn estimate_mb(req: &InstallRequest) -> u64 {
+    let mut mb = 0;
+    if cfg!(windows) && (req.force || !tools_dir().join("llama").join("llama-server.exe").exists()) {
+        mb += TOOLS_SIZE_MB;
+    }
+    let missing = |m: &ModelInfo| if models_dir().join(m.file).exists() { 0 } else { m.size_mb };
+    if let Some(m) = whisper_model(&req.whisper_model) {
+        mb += missing(m);
+    }
+    if let Some(m) = llm_model(&req.llm_model) {
+        mb += missing(m);
+    }
+    mb
+}
+
+fn client() -> Result<reqwest::blocking::Client> {
+    Ok(reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(4 * 3600))
         .connect_timeout(Duration::from_secs(30))
         .user_agent("BWSmartClips")
-        .build()?;
+        .build()?)
+}
 
-    let mut step = |name: &str, p: f32, msg: String| {
-        on_progress(InstallProgress { step: name.into(), progress: p, message: msg })
-    };
+/// Baixa e instala o que falta.
+pub fn install(req: &InstallRequest, cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<()> {
+    let models = models_dir();
+    std::fs::create_dir_all(&models)?;
+    let client = client()?;
+    let mut step = |name: &str, p: f32, msg: String| on_progress(InstallProgress { step: name.into(), progress: p, message: msg });
 
-    // yt-dlp
-    let ytdlp = tools.join("yt-dlp.exe");
-    if force || !ytdlp.exists() {
-        download_file(&client, YTDLP_URL, &ytdlp, cancel, &mut |p| step("yt-dlp", p, "Baixando yt-dlp…".into()))?;
+    if cfg!(windows) {
+        install_windows_tools(&client, req.force, cancel, &mut step)?;
     }
 
-    // ffmpeg + ffprobe
+    let mut wanted: Vec<(&str, &ModelInfo)> = Vec::new();
+    if req.vad {
+        wanted.push(("vad", &VAD_MODEL));
+    }
+    if let Some(m) = whisper_model(&req.whisper_model) {
+        wanted.push(("whisper", m));
+    }
+    if let Some(m) = llm_model(&req.llm_model) {
+        wanted.push(("ia", m));
+    }
+    for (kind, m) in wanted {
+        let target = models.join(m.file);
+        if target.exists() {
+            continue;
+        }
+        let what = match kind {
+            "vad" => "detector de voz".to_string(),
+            "whisper" => format!("modelo Whisper \"{}\"", m.id),
+            _ => format!("modelo de IA \"{}\"", m.id),
+        };
+        download_file(&client, m.url, &target, cancel, &mut |p, done, total| {
+            step(kind, p, format!("Baixando {what}… {}", fmt_progress(done, total)))
+        })?;
+    }
+
+    if !cfg!(windows) {
+        step(
+            "aviso",
+            1.0,
+            "Modelos instalados. No Linux/macOS instale ffmpeg, yt-dlp, whisper-cli e llama-server pelo gerenciador de pacotes.".into(),
+        );
+    }
+    on_progress(InstallProgress { step: "ok".into(), progress: 1.0, message: "Tudo instalado!".into() });
+    Ok(())
+}
+
+fn install_windows_tools(
+    client: &reqwest::blocking::Client,
+    force: bool,
+    cancel: &Cancel,
+    step: &mut dyn FnMut(&str, f32, String),
+) -> Result<()> {
+    let tools = tools_dir();
+    std::fs::create_dir_all(&tools)?;
+    let tmp = tools.join("_download");
+    std::fs::create_dir_all(&tmp)?;
+
+    let ytdlp = tools.join("yt-dlp.exe");
+    if force || !ytdlp.exists() {
+        download_file(client, YTDLP_URL, &ytdlp, cancel, &mut |p, d, t| step("yt-dlp", p, format!("Baixando yt-dlp… {}", fmt_progress(d, t))))?;
+    }
+
     if force || !tools.join("ffmpeg.exe").exists() || !tools.join("ffprobe.exe").exists() {
         let zip = tmp.join("ffmpeg.zip");
-        download_file(&client, FFMPEG_URL, &zip, cancel, &mut |p| step("ffmpeg", p, "Baixando ffmpeg…".into()))?;
+        download_file(client, FFMPEG_URL, &zip, cancel, &mut |p, d, t| step("ffmpeg", p, format!("Baixando ffmpeg… {}", fmt_progress(d, t))))?;
         step("ffmpeg", 1.0, "Extraindo ffmpeg…".into());
         extract_named(&zip, &tools, &["ffmpeg.exe", "ffprobe.exe"])?;
     }
 
-    // Deno (runtime de JavaScript usado pelo yt-dlp no YouTube)
     if force || !tools.join("deno.exe").exists() {
         let zip = tmp.join("deno.zip");
-        match download_file(&client, DENO_URL, &zip, cancel, &mut |p| step("deno", p, "Baixando Deno (para o YouTube)…".into())) {
+        match download_file(client, DENO_URL, &zip, cancel, &mut |p, d, t| step("deno", p, format!("Baixando Deno (para o YouTube)… {}", fmt_progress(d, t)))) {
             Ok(()) => extract_named(&zip, &tools, &["deno.exe"])?,
             Err(e) if e.downcast_ref::<Cancelled>().is_some() => return Err(e),
-            // Não é fatal: o yt-dlp ainda funciona em muitos sites sem ele.
             Err(_) => step("deno", 1.0, "Não foi possível baixar o Deno (opcional)".into()),
         }
     }
 
-    // whisper.cpp
     let whisper_dir = tools.join("whisper");
     if force || !whisper_dir.join("whisper-cli.exe").exists() {
         let zip = tmp.join("whisper.zip");
-        download_file(&client, WHISPER_URL, &zip, cancel, &mut |p| step("whisper", p, "Baixando whisper.cpp…".into()))?;
+        download_file(client, WHISPER_URL, &zip, cancel, &mut |p, d, t| step("whisper", p, format!("Baixando whisper.cpp… {}", fmt_progress(d, t))))?;
         step("whisper", 1.0, "Extraindo whisper.cpp…".into());
         std::fs::create_dir_all(&whisper_dir)?;
         extract_flat(&zip, &whisper_dir, &[".exe", ".dll"])?;
@@ -104,18 +210,128 @@ pub fn install_tools(
         }
     }
 
-    // Modelo
-    if !model.trim().is_empty() {
-        let target = models.join(format!("ggml-{}.bin", model.trim()));
-        if force || !target.exists() {
-            download_file(&client, &model_url(model.trim()), &target, cancel, &mut |p| {
-                step("modelo", p, format!("Baixando modelo Whisper \"{model}\"…"))
-            })?;
+    let llama_dir = tools.join("llama");
+    if force || !llama_dir.join("llama-server.exe").exists() {
+        step("llama", 0.0, "Procurando a versão mais recente do llama.cpp…".into());
+        let url = latest_llama_asset(client).context("não foi possível encontrar o pacote do llama.cpp para Windows")?;
+        let zip = tmp.join("llama.zip");
+        download_file(client, &url, &zip, cancel, &mut |p, d, t| step("llama", p, format!("Baixando llama.cpp (IA local)… {}", fmt_progress(d, t))))?;
+        step("llama", 1.0, "Extraindo llama.cpp…".into());
+        std::fs::create_dir_all(&llama_dir)?;
+        extract_flat(&zip, &llama_dir, &[".exe", ".dll"])?;
+        if !llama_dir.join("llama-server.exe").exists() {
+            bail!("o pacote do llama.cpp não contém llama-server.exe");
         }
     }
-
     let _ = std::fs::remove_dir_all(&tmp);
-    on_progress(InstallProgress { step: "ok".into(), progress: 1.0, message: "Ferramentas instaladas!".into() });
+    Ok(())
+}
+
+/// URL do pacote "win-cpu-x64" da última versão do llama.cpp.
+fn latest_llama_asset(client: &reqwest::blocking::Client) -> Result<String> {
+    let v: serde_json::Value = client
+        .get(LLAMA_RELEASES_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()?
+        .error_for_status()?
+        .json()?;
+    pick_llama_asset(&v).context("nenhum pacote win-cpu-x64 na última versão")
+}
+
+pub fn pick_llama_asset(release: &serde_json::Value) -> Option<String> {
+    release["assets"].as_array()?.iter().find_map(|a| {
+        let name = a["name"].as_str()?;
+        (name.contains("bin-win-cpu-x64") && name.ends_with(".zip"))
+            .then(|| a["browser_download_url"].as_str().map(str::to_string))
+            .flatten()
+    })
+}
+
+/// Copia modelos (.bin/.gguf) de arquivos ou pastas (ex.: um pendrive) para a pasta de modelos.
+pub fn import_models(paths: &[PathBuf], cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<Vec<PathBuf>> {
+    let models = models_dir();
+    std::fs::create_dir_all(&models)?;
+    let mut files = Vec::new();
+    for p in paths {
+        if p.is_dir() {
+            for e in std::fs::read_dir(p)?.filter_map(|e| e.ok()) {
+                files.push(e.path());
+            }
+        } else {
+            files.push(p.clone());
+        }
+    }
+    files.retain(|f| {
+        f.is_file()
+            && f.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf") || e.eq_ignore_ascii_case("bin"))
+    });
+    if files.is_empty() {
+        bail!("nenhum arquivo de modelo (.gguf ou .bin) encontrado");
+    }
+    let mut copied = Vec::new();
+    for f in files {
+        let name = f.file_name().unwrap().to_owned();
+        let dest = models.join(&name);
+        let label = name.to_string_lossy().into_owned();
+        if dest.exists() && std::fs::metadata(&dest)?.len() == std::fs::metadata(&f)?.len() {
+            copied.push(dest);
+            continue;
+        }
+        copy_with_progress(&f, &dest, cancel, &mut |p, d, t| {
+            on_progress(InstallProgress { step: "importar".into(), progress: p, message: format!("Copiando {label}… {}", fmt_progress(d, t)) })
+        })?;
+        copied.push(dest);
+    }
+    on_progress(InstallProgress { step: "ok".into(), progress: 1.0, message: format!("{} modelo(s) importado(s)", copied.len()) });
+    Ok(copied)
+}
+
+fn fmt_progress(done: u64, total: u64) -> String {
+    let mb = |b: u64| b as f64 / 1_048_576.0;
+    if total > 0 {
+        format!("{:.0} / {:.0} MB", mb(done), mb(total))
+    } else {
+        format!("{:.0} MB", mb(done))
+    }
+}
+
+fn copy_stream(
+    mut reader: impl Read,
+    total: u64,
+    dest: &Path,
+    cancel: &Cancel,
+    on_progress: &mut dyn FnMut(f32, u64, u64),
+) -> Result<()> {
+    let part = PathBuf::from(format!("{}.part", dest.display()));
+    let mut file = File::create(&part).with_context(|| format!("não foi possível criar {}", part.display()))?;
+    let mut buf = vec![0u8; 512 * 1024];
+    let mut done: u64 = 0;
+    let mut last_report = 0u64;
+    loop {
+        if cancel.is_cancelled() {
+            drop(file);
+            let _ = std::fs::remove_file(&part);
+            bail!(Cancelled);
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])?;
+        done += n as u64;
+        if done - last_report > 2 * 1_048_576 {
+            last_report = done;
+            on_progress(if total > 0 { done as f32 / total as f32 } else { 0.0 }, done, total);
+        }
+    }
+    file.flush()?;
+    drop(file);
+    if total > 0 && done < total {
+        let _ = std::fs::remove_file(&part);
+        bail!("transferência incompleta ({done} de {total} bytes)");
+    }
+    std::fs::rename(&part, dest)?;
+    on_progress(1.0, done, total);
     Ok(())
 }
 
@@ -124,42 +340,19 @@ fn download_file(
     url: &str,
     dest: &Path,
     cancel: &Cancel,
-    on_progress: &mut dyn FnMut(f32),
+    on_progress: &mut dyn FnMut(f32, u64, u64),
 ) -> Result<()> {
-    let mut resp = client.get(url).send().with_context(|| format!("falha ao baixar {url}"))?;
+    let resp = client.get(url).send().with_context(|| format!("falha ao baixar {url}"))?;
     if !resp.status().is_success() {
         bail!("falha ao baixar {url}: {}", resp.status());
     }
     let total = resp.content_length().unwrap_or(0);
-    let part = PathBuf::from(format!("{}.part", dest.display()));
-    let mut file = File::create(&part).with_context(|| format!("não foi possível criar {}", part.display()))?;
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut done: u64 = 0;
-    loop {
-        if cancel.is_cancelled() {
-            drop(file);
-            let _ = std::fs::remove_file(&part);
-            bail!(Cancelled);
-        }
-        let n = resp.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])?;
-        done += n as u64;
-        if total > 0 {
-            on_progress(done as f32 / total as f32);
-        }
-    }
-    file.flush()?;
-    drop(file);
-    if total > 0 && done < total {
-        let _ = std::fs::remove_file(&part);
-        bail!("download incompleto de {url}");
-    }
-    std::fs::rename(&part, dest)?;
-    on_progress(1.0);
-    Ok(())
+    copy_stream(resp, total, dest, cancel, on_progress).with_context(|| format!("falha ao baixar {url}"))
+}
+
+fn copy_with_progress(src: &Path, dest: &Path, cancel: &Cancel, on_progress: &mut dyn FnMut(f32, u64, u64)) -> Result<()> {
+    let total = std::fs::metadata(src)?.len();
+    copy_stream(File::open(src)?, total, dest, cancel, on_progress)
 }
 
 /// Extrai do zip apenas os arquivos com os nomes dados (em qualquer subpasta).
@@ -201,4 +394,38 @@ fn extract_flat(zip_path: &Path, dest: &Path, exts: &[&str]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_cpu_asset() {
+        let rel = serde_json::json!({"assets": [
+            {"name": "llama-b9000-bin-win-cuda-12.4-x64.zip", "browser_download_url": "u1"},
+            {"name": "llama-b9000-bin-win-cpu-arm64.zip", "browser_download_url": "u2"},
+            {"name": "llama-b9000-bin-win-cpu-x64.zip", "browser_download_url": "u3"}
+        ]});
+        assert_eq!(pick_llama_asset(&rel).as_deref(), Some("u3"));
+    }
+
+    #[test]
+    fn catalog_is_consistent() {
+        for m in WHISPER_MODELS.iter().chain(LLM_MODELS) {
+            assert!(m.url.ends_with(m.file), "{}", m.id);
+        }
+        assert!(WHISPER_MODELS.iter().all(|m| m.url.starts_with(HF_WHISPER)));
+        assert_eq!(LLM_MODELS.iter().filter(|m| m.recommended).count(), 1);
+    }
+
+    #[test]
+    fn import_copies_models_only() {
+        let src = std::env::temp_dir().join(format!("bwsc-import-{}", std::process::id()));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("notas.txt"), b"x").unwrap();
+        let err = import_models(std::slice::from_ref(&src), &Cancel::new(), &mut |_| {});
+        assert!(err.is_err());
+        std::fs::remove_dir_all(&src).unwrap();
+    }
 }

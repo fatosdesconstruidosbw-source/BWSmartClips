@@ -23,7 +23,7 @@ jobs:
       - name: Testes do núcleo
         run: cargo test -p bwsc-core -p bwsc-cli
       - name: Clippy
-        run: cargo clippy -p bwsc-core -p bwsc-cli -- -D warnings
+        run: cargo clippy -p bwsc-core -p bwsc-cli --all-targets -- -D warnings
 
   windows:
     name: Instalador Windows

@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use bwsc_core::config::{models_dir, tools_dir};
-use bwsc_core::installer::{self, InstallProgress};
+use bwsc_core::cache::Cache;
+use bwsc_core::installer::{self, InstallProgress, InstallRequest};
 use bwsc_core::process::is_cancelled_error;
 use bwsc_core::tools::Tools;
 use bwsc_core::{run_job, Cancel, ClipOptions, JobResult, Progress, Settings, Source};
@@ -44,51 +45,81 @@ fn save_settings(state: State<AppState>, settings: Settings) -> CmdResult<()> {
 }
 
 #[derive(Serialize)]
+struct ModelFile {
+    path: String,
+    name: String,
+    size_mb: u64,
+}
+
+#[derive(Serialize)]
 struct ToolStatus {
     tools: Tools,
-    installed_models: Vec<String>,
-    available_models: Vec<(String, String)>,
+    whisper_models: Vec<ModelFile>,
+    llm_models: Vec<ModelFile>,
+    whisper_catalog: &'static [installer::ModelInfo],
+    llm_catalog: &'static [installer::ModelInfo],
     tools_dir: String,
     models_dir: String,
-    installer_supported: bool,
+    free_space_mb: Option<u64>,
+    tools_installer_supported: bool,
     installing: bool,
+}
+
+fn list_models(pred: impl Fn(&str) -> bool) -> Vec<ModelFile> {
+    let mut v: Vec<ModelFile> = std::fs::read_dir(models_dir())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| pred(&n.to_lowercase())))
+                .map(|p| ModelFile {
+                    name: p.file_name().unwrap().to_string_lossy().into_owned(),
+                    size_mb: std::fs::metadata(&p).map(|m| m.len() / 1_048_576).unwrap_or(0),
+                    path: p.to_string_lossy().into_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by(|a, b| a.name.cmp(&b.name));
+    v
 }
 
 #[tauri::command]
 fn tool_status(state: State<AppState>) -> ToolStatus {
     let settings = state.settings.lock().unwrap().clone();
-    let mut installed_models: Vec<String> = std::fs::read_dir(models_dir())
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|x| x == "bin"))
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    installed_models.sort();
     ToolStatus {
         tools: Tools::locate(&settings),
-        installed_models,
-        available_models: installer::WHISPER_MODELS.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+        whisper_models: list_models(|n| n.starts_with("ggml-") && n.ends_with(".bin") && !n.contains("silero")),
+        llm_models: list_models(|n| n.ends_with(".gguf") && !n.starts_with("mmproj")),
+        whisper_catalog: installer::WHISPER_MODELS,
+        llm_catalog: installer::LLM_MODELS,
         tools_dir: tools_dir().to_string_lossy().into_owned(),
         models_dir: models_dir().to_string_lossy().into_owned(),
-        installer_supported: cfg!(windows),
+        free_space_mb: installer::free_space().map(|b| b / 1_048_576),
+        tools_installer_supported: cfg!(windows),
         installing: state.install.lock().unwrap().is_some(),
     }
 }
 
 #[tauri::command]
-fn install_tools(app: AppHandle, state: State<AppState>, model: String, force: bool) -> CmdResult<()> {
+fn estimate_install(request: InstallRequest) -> u64 {
+    installer::estimate_mb(&request)
+}
+
+/// Roda uma tarefa de instalação/importação em segundo plano, emitindo eventos.
+fn spawn_install(
+    app: AppHandle,
+    state: &AppState,
+    task: impl FnOnce(&Cancel, &mut dyn FnMut(InstallProgress)) -> anyhow::Result<()> + Send + 'static,
+) -> CmdResult<()> {
     let mut slot = state.install.lock().unwrap();
     if slot.is_some() {
-        return Err("A instalação já está em andamento.".into());
+        return Err("Já existe uma instalação em andamento.".into());
     }
     let cancel = Cancel::new();
     *slot = Some(cancel.clone());
     drop(slot);
     std::thread::spawn(move || {
-        let res = installer::install_tools(&model, force, &cancel, &mut |p: InstallProgress| {
+        let res = task(&cancel, &mut |p: InstallProgress| {
             let _ = app.emit("install://progress", p);
         });
         app.state::<AppState>().install.lock().unwrap().take();
@@ -102,6 +133,31 @@ fn install_tools(app: AppHandle, state: State<AppState>, model: String, force: b
         }
     });
     Ok(())
+}
+
+#[tauri::command]
+fn install_tools(app: AppHandle, state: State<AppState>, request: InstallRequest) -> CmdResult<()> {
+    spawn_install(app, &state, move |cancel, cb| installer::install(&request, cancel, cb))
+}
+
+#[tauri::command]
+async fn import_models(app: AppHandle) -> CmdResult<bool> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Escolha os arquivos de modelo (.gguf / .bin)")
+        .add_filter("Modelos", &["gguf", "bin"])
+        .blocking_pick_files();
+    let Some(files) = picked else { return Ok(false) };
+    let paths: Vec<PathBuf> = files.into_iter().filter_map(|f| f.into_path().ok()).collect();
+    let state = app.state::<AppState>();
+    spawn_install(app.clone(), &state, move |cancel, cb| installer::import_models(&paths, cancel, cb).map(|_| ()))?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn clear_cache() -> CmdResult<()> {
+    Cache::new(true).clear().map_err(err)
 }
 
 #[tauri::command]
@@ -260,6 +316,9 @@ fn main() {
             save_settings,
             tool_status,
             install_tools,
+            estimate_install,
+            import_models,
+            clear_cache,
             cancel_install,
             pick_video,
             pick_folder,

@@ -48,6 +48,7 @@ function fillOptions(o) {
   $("cap-position").value = c.position;
   $("cap-upper").checked = c.uppercase;
   $("cap-pop").checked = c.pop;
+  $("opt-reanalyze").checked = false;
   updateCaptionPreview();
 }
 
@@ -61,6 +62,7 @@ function readOptions() {
     language: $("opt-lang").value,
     reframe: $("opt-reframe").value,
     focus: $("opt-focus").value.trim(),
+    reanalyze: $("opt-reanalyze").checked,
     captions: {
       ...base.captions,
       enabled: $("cap-enabled").checked,
@@ -91,100 +93,188 @@ function updateCaptionPreview() {
   $(id).addEventListener("input", updateCaptionPreview)
 );
 
-// ------------------------------------------------------------- ferramentas
+// ------------------------------------------------------------- ferramentas e modelos
+
+let toolStatus = null;
+const gb = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1).replace(".", ",")} GB` : `${mb} MB`);
+
+function fillModelSelect(sel, installed, current, autoLabel) {
+  sel.innerHTML = `<option value="">${autoLabel}</option>` +
+    installed.map((m) => `<option value="${esc(m.path)}">${esc(m.name)} (${gb(m.size_mb)})</option>`).join("");
+  sel.value = current || "";
+  if (sel.value !== (current || "")) {
+    sel.insertAdjacentHTML("beforeend", `<option value="${esc(current)}">${esc(current)}</option>`);
+    sel.value = current;
+  }
+}
+
+function fillCatalog(sel) {
+  const cat = sel.id.endsWith("llm") ? toolStatus.llm_catalog : toolStatus.whisper_catalog;
+  const prev = sel.dataset.filled ? sel.value : null;
+  sel.innerHTML = cat.map((m) => `<option value="${m.id}">${esc(m.label)} · ${gb(m.size_mb)}</option>`).join("") +
+    `<option value="">(não baixar)</option>`;
+  sel.value = prev ?? (cat.find((m) => m.recommended)?.id ?? "");
+  sel.dataset.filled = "1";
+}
 
 async function refreshTools() {
   const st = await invoke("tool_status");
+  toolStatus = st;
   const t = st.tools;
-  const needWhisper = settings.transcription === "local";
+  const localWhisper = settings.transcription === "local";
+  const localAi = settings.llm_provider === "local";
   const missing = [];
   if (!t.ffmpeg) missing.push("ffmpeg");
   if (!t.ffprobe) missing.push("ffprobe");
   if (!t.ytdlp) missing.push("yt-dlp (para links)");
-  if (needWhisper && !t.whisper) missing.push("whisper-cli");
-  if (needWhisper && !t.whisper_model) missing.push("modelo do Whisper");
+  if (localWhisper && !t.whisper) missing.push("whisper-cli");
+  if (localWhisper && !t.whisper_model) missing.push("modelo do Whisper");
+  if (localAi && !t.llama) missing.push("llama-server (IA local)");
+  if (localAi && !t.llm_model) missing.push("modelo de IA local");
   $("tools-missing").textContent = missing.join(", ");
   $("tools-banner").classList.toggle("hidden", missing.length === 0);
-  $("btn-banner-install").classList.toggle("hidden", !st.installer_supported);
 
   const rows = [
     ["ffmpeg", t.ffmpeg], ["ffprobe", t.ffprobe], ["yt-dlp", t.ytdlp],
-    ["whisper-cli", t.whisper], ["modelo Whisper", t.whisper_model],
+    ["whisper-cli", t.whisper], ["modelo Whisper", t.whisper_model], ["detector de voz", t.vad_model],
+    ["llama-server", t.llama], ["modelo de IA", t.llm_model],
   ];
   $("tools-table").innerHTML = rows
     .map(([n, p]) => `<div>${p ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'} ${n}</div>
       <div class="path">${p ? esc(p) : "não encontrado"}</div>`)
-    .join("") + `<div class="muted">Pasta</div><div class="path">${esc(st.tools_dir)}</div>`;
+    .join("") +
+    `<div class="muted">Ferramentas</div><div class="path">${esc(st.tools_dir)}</div>` +
+    `<div class="muted">Modelos</div><div class="path">${esc(st.models_dir)}</div>`;
 
-  const sel = $("s-whisper-model");
-  sel.innerHTML = `<option value="">Automático (maior modelo instalado)</option>` +
-    st.installed_models.map((m) => `<option value="${esc(m)}">${esc(m.split(/[\\/]/).pop())}</option>`).join("");
-  sel.value = settings.whisper_model || "";
-  if (sel.value !== (settings.whisper_model || "")) {
-    sel.insertAdjacentHTML("beforeend", `<option value="${esc(settings.whisper_model)}">${esc(settings.whisper_model)}</option>`);
-    sel.value = settings.whisper_model;
-  }
-
-  const im = $("install-model");
-  if (!im.options.length) {
-    im.innerHTML = st.available_models.map(([n, d]) => `<option value="${n}">${n} — ${esc(d)}</option>`).join("") +
-      `<option value="">(não baixar modelo)</option>`;
-    im.value = "small";
-  }
-  ["btn-install", "btn-update"].forEach((id) => ($(id).disabled = !st.installer_supported || st.installing));
-  if (!st.installer_supported) $("install-msg").textContent = "Instalação automática disponível apenas no Windows.";
+  fillModelSelect($("s-whisper-model"), st.whisper_models, settings.whisper_model, "Automático (maior modelo instalado)");
+  fillModelSelect($("s-llm-model"), st.llm_models, settings.llm_model, "Automático (recomendado ou o menor instalado)");
+  ["install-whisper", "install-llm", "setup-whisper", "setup-llm"].forEach((id) => fillCatalog($(id)));
+  setInstalling(st.installing);
+  $("btn-update").classList.toggle("hidden", !st.tools_installer_supported);
+  updateEstimates();
   return st;
 }
 
-async function startInstall(force) {
+function installRequest(prefix, force = false) {
+  return {
+    whisper_model: $(`${prefix}-whisper`).value,
+    llm_model: $(`${prefix}-llm`).value,
+    vad: $(`${prefix}-vad`).checked,
+    force,
+  };
+}
+
+async function updateEstimates() {
+  if (!toolStatus) return;
+  const free = toolStatus.free_space_mb;
+  for (const [prefix, out] of [["install", "install-estimate"], ["setup", "setup-space"]]) {
+    const mb = await invoke("estimate_install", { request: installRequest(prefix) });
+    const enough = free == null || free > mb + 1024;
+    const el = $(out);
+    el.innerHTML = mb > 0
+      ? `A baixar: <b>${gb(mb)}</b>${free != null ? ` · Espaço livre: <b>${gb(free)}</b>` : ""}${enough ? "" : " — <b>espaço insuficiente!</b>"}`
+      : "Tudo o que foi escolhido já está instalado ✔";
+    el.classList.toggle("bad", !enough);
+  }
+}
+["install-whisper", "install-llm", "install-vad", "setup-whisper", "setup-llm", "setup-vad"].forEach((id) =>
+  $(id).addEventListener("change", updateEstimates)
+);
+
+function setInstalling(on) {
+  for (const bar of ["install-bar", "setup-bar"]) $(bar).classList.toggle("hidden", !on);
+  $("btn-install-cancel").classList.toggle("hidden", !on);
+  ["btn-install", "btn-update", "btn-import", "setup-go", "setup-import"].forEach((id) => ($(id).disabled = on));
+}
+
+async function startInstall(prefix, force) {
   try {
-    await invoke("install_tools", { model: $("install-model").value, force });
-    $("install-bar").classList.remove("hidden");
-    $("btn-install-cancel").classList.remove("hidden");
-    $("btn-install").disabled = $("btn-update").disabled = true;
+    await invoke("install_tools", { request: installRequest(prefix, force) });
+    $("install-fill").style.width = $("setup-fill").style.width = "0%";
+    setInstalling(true);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function startImport() {
+  try {
+    if (await invoke("import_models")) setInstalling(true);
   } catch (e) {
     toast(String(e));
   }
 }
 
 listen("install://progress", (p) => {
-  $("install-fill").style.width = `${Math.round(p.progress * 100)}%`;
-  $("install-msg").textContent = `${p.message} ${Math.round(p.progress * 100)}%`;
+  const pct = `${Math.round(p.progress * 100)}%`;
+  $("install-fill").style.width = $("setup-fill").style.width = pct;
+  $("install-msg").textContent = $("setup-msg").textContent = p.message;
 });
 listen("install://done", async () => {
-  $("install-msg").textContent = "Ferramentas instaladas!";
-  $("btn-install-cancel").classList.add("hidden");
-  toast("Ferramentas instaladas ✔");
+  setInstalling(false);
+  $("install-msg").textContent = $("setup-msg").textContent = "Pronto ✔";
+  toast("Instalação concluída ✔");
+  if (!$("setup-modal").classList.contains("hidden")) await finishSetup();
   await refreshTools();
 });
 listen("install://error", async (msg) => {
-  $("install-msg").textContent = "Erro: " + msg;
-  $("btn-install-cancel").classList.add("hidden");
+  setInstalling(false);
+  $("install-msg").textContent = $("setup-msg").textContent = "Erro: " + msg;
   await refreshTools();
 });
 
-$("btn-install").onclick = () => startInstall(false);
-$("btn-update").onclick = () => startInstall(true);
+$("btn-install").onclick = () => startInstall("install", false);
+$("btn-update").onclick = () => startInstall("install", true);
+$("btn-import").onclick = startImport;
 $("btn-install-cancel").onclick = () => invoke("cancel_install");
-$("btn-banner-install").onclick = () => {
-  openSettings("tab-tools");
-  startInstall(false);
-};
+$("btn-banner-install").onclick = () => openSettings("tab-tools");
+
+// ------------------------------------------------------------- assistente
+
+function openSetup() {
+  $("setup-modal").classList.remove("hidden");
+  updateEstimates();
+}
+
+async function finishSetup() {
+  settings.setup_done = true;
+  await invoke("save_settings", { settings });
+  $("setup-modal").classList.add("hidden");
+}
+
+$("setup-go").onclick = () => startInstall("setup", false);
+$("setup-import").onclick = startImport;
+$("setup-skip").onclick = finishSetup;
 
 // ------------------------------------------------------------- configurações
 
 const S_FIELDS = {
-  "s-llm": "llm_provider", "s-anthropic-key": "anthropic_api_key", "s-anthropic-model": "anthropic_model",
+  "s-llm": "llm_provider", "s-llm-model": "llm_model", "s-llm-context": "llm_context", "s-llm-threads": "llm_threads",
+  "s-llm-candidates": "llm_candidates", "s-ollama-url": "ollama_base_url", "s-ollama-model": "ollama_model",
+  "s-anthropic-key": "anthropic_api_key", "s-anthropic-model": "anthropic_model",
   "s-anthropic-url": "anthropic_base_url", "s-openai-key": "openai_api_key", "s-openai-model": "openai_llm_model",
-  "s-openai-url": "openai_base_url", "s-engine": "transcription", "s-whisper-threads": "whisper_threads",
-  "s-openai-tmodel": "openai_transcription_model", "s-ffmpeg": "ffmpeg_path", "s-ffprobe": "ffprobe_path",
-  "s-ytdlp": "ytdlp_path", "s-whisper": "whisper_path", "s-output": "output_dir", "s-height": "output_height",
+  "s-openai-url": "openai_base_url", "s-engine": "transcription", "s-whisper-model": "whisper_model",
+  "s-whisper-threads": "whisper_threads", "s-openai-tmodel": "openai_transcription_model",
+  "s-ffmpeg": "ffmpeg_path", "s-ffprobe": "ffprobe_path", "s-ytdlp": "ytdlp_path", "s-whisper": "whisper_path",
+  "s-llama": "llama_path", "s-output": "output_dir", "s-height": "output_height",
   "s-preset": "x264_preset", "s-crf": "x264_crf",
 };
-const NUMERIC = new Set(["whisper_threads", "output_height", "x264_crf"]);
+const S_CHECKS = { "s-vad": "whisper_vad", "s-cache": "use_cache" };
+const NUMERIC = new Set(["whisper_threads", "output_height", "x264_crf", "llm_context", "llm_threads", "llm_candidates"]);
+
+function showProviderFields() {
+  const p = $("s-llm").value;
+  document.querySelectorAll("fieldset[data-provider]").forEach((f) => f.classList.toggle("hidden", f.dataset.provider !== p));
+}
+$("s-llm").addEventListener("change", showProviderFields);
+$("s-llm-candidates").addEventListener("input", () => ($("s-llm-candidates-2").value = $("s-llm-candidates").value));
+$("s-llm-candidates-2").addEventListener("input", () => ($("s-llm-candidates").value = $("s-llm-candidates-2").value));
 
 function fillSettings() {
   for (const [id, key] of Object.entries(S_FIELDS)) $(id).value = settings[key];
+  for (const [id, key] of Object.entries(S_CHECKS)) $(id).checked = !!settings[key];
+  $("s-llm-candidates-2").value = settings.llm_candidates;
+  showProviderFields();
 }
 
 function readSettings() {
@@ -193,9 +283,20 @@ function readSettings() {
     const v = $(id).value;
     s[key] = NUMERIC.has(key) ? parseInt(v, 10) || 0 : v.trim();
   }
-  s.whisper_model = $("s-whisper-model").value;
+  for (const [id, key] of Object.entries(S_CHECKS)) s[key] = $(id).checked;
+  if (s.llm_candidates < 4) s.llm_candidates = 16;
+  if (s.llm_context < 2048) s.llm_context = 8192;
   return s;
 }
+
+$("btn-clear-cache").onclick = async () => {
+  try {
+    await invoke("clear_cache");
+    toast("Cache limpo");
+  } catch (e) {
+    toast(String(e));
+  }
+};
 
 function openSettings(tab) {
   fillSettings();
@@ -235,7 +336,7 @@ $("btn-save-settings").onclick = async () => {
 };
 
 $("btn-save-defaults").onclick = async () => {
-  settings.defaults = readOptions();
+  settings.defaults = { ...readOptions(), reanalyze: false };
   await invoke("save_settings", { settings });
   toast("Opções salvas como padrão");
 };
@@ -321,6 +422,9 @@ function showResults(project) {
   currentProject = project;
   $("results").classList.remove("hidden");
   $("results-title").textContent = `${project.clips.length} cortes · ${project.source_title}`;
+  const warn = project.warnings || [];
+  $("results-warnings").innerHTML = warn.map((w) => `<p>⚠ ${esc(w)}</p>`).join("");
+  $("results-warnings").classList.toggle("hidden", warn.length === 0);
   $("clips").innerHTML = project.clips
     .map((c, i) => {
       const dur = c.end - c.start;
@@ -401,9 +505,13 @@ $("btn-projects").onclick = async () => {
   settings = await invoke("get_settings");
   fillOptions(settings.defaults);
   await refreshTools();
-  const needsKey = settings.llm_provider === "anthropic" ? !settings.anthropic_api_key : !settings.openai_api_key;
-  if (needsKey) {
+  if (!settings.setup_done) {
+    openSetup();
+    return;
+  }
+  const cloud = { anthropic: "anthropic_api_key", open_ai: "openai_api_key" }[settings.llm_provider];
+  if (cloud && !settings[cloud]) {
     openSettings("tab-ai");
-    toast("Configure a chave da IA para começar", 4000);
+    toast("Configure a chave da API ou volte para a IA local", 4000);
   }
 })();

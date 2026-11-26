@@ -64,13 +64,20 @@ enum Cmd {
     },
     /// Mostra onde estão ffmpeg, yt-dlp, whisper e o modelo.
     Tools,
-    /// Baixa as ferramentas (Windows).
+    /// Baixa ferramentas (Windows) e modelos (Whisper, detector de voz e IA local).
     Install {
         #[arg(long, default_value = "small")]
-        model: String,
+        whisper: String,
+        /// Modelo de IA local: qwen3.5-2b, qwen3.5-4b ou qwen3.5-9b ("" = nenhum).
+        #[arg(long, default_value = "qwen3.5-4b")]
+        llm: String,
+        #[arg(long)]
+        no_vad: bool,
         #[arg(long)]
         force: bool,
     },
+    /// Copia modelos (.gguf/.bin) de arquivos ou pastas para a pasta de modelos.
+    Import { paths: Vec<PathBuf> },
     /// Mostra o caminho e o conteúdo da configuração.
     Config,
 }
@@ -100,12 +107,24 @@ fn real_main() -> Result<()> {
         Cmd::Config => {
             println!("# {}\n{}", config_path.display(), serde_json::to_string_pretty(&settings)?);
         }
-        Cmd::Install { model, force } => {
-            bwsc_core::installer::install_tools(&model, force, &cancel, &mut |p| {
-                print!("\r[{:>3.0}%] {:<60}", p.progress * 100.0, p.message);
+        Cmd::Install { whisper, llm, no_vad, force } => {
+            let req = bwsc_core::installer::InstallRequest { whisper_model: whisper, llm_model: llm, vad: !no_vad, force };
+            println!("A baixar: ~{} MB", bwsc_core::installer::estimate_mb(&req));
+            bwsc_core::installer::install(&req, &cancel, &mut |p| {
+                print!("\r[{:>3.0}%] {:<70}", p.progress * 100.0, p.message);
                 let _ = std::io::stdout().flush();
             })?;
             println!();
+        }
+        Cmd::Import { paths } => {
+            let done = bwsc_core::installer::import_models(&paths, &cancel, &mut |p| {
+                print!("\r[{:>3.0}%] {:<70}", p.progress * 100.0, p.message);
+                let _ = std::io::stdout().flush();
+            })?;
+            println!();
+            for f in done {
+                println!("  {}", f.display());
+            }
         }
         Cmd::Run { source, count, min, max, lang, focus, reframe, no_captions, out, transcript, clips } => {
             let mut opts = settings.defaults.clone();
@@ -227,7 +246,7 @@ fn manual(
     };
     let results = render_plans(&plans, &transcript, &info, &ffmpeg, file, opts, settings, &project_dir, &work, cancel, &mut print_progress)?;
     let _ = std::fs::remove_dir_all(&work);
-    let result = bwsc_core::JobResult { project_dir, source_title: title, source_file: file.clone(), clips: results };
+    let result = bwsc_core::JobResult { project_dir, source_title: title, source_file: file.clone(), clips: results, warnings: vec![] };
     std::fs::write(result.project_dir.join("cortes.json"), serde_json::to_string_pretty(&result)?)?;
     Ok(result)
 }

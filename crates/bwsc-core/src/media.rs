@@ -106,6 +106,58 @@ pub fn extract_mp3_chunk(
     Ok(())
 }
 
+/// Intervalo (s) de cada medida de volume em [`loudness_profile`].
+pub const LOUDNESS_STEP: f64 = 0.5;
+
+/// Volume (dBFS) a cada [`LOUDNESS_STEP`] segundos, para achar trechos com mais energia.
+pub fn loudness_profile(ffmpeg: &Path, input: &Path, cancel: &Cancel) -> Result<Vec<f32>> {
+    use std::io::Read;
+    const RATE: usize = 8000;
+    let mut cmd = command(ffmpeg);
+    cmd.args(["-v", "error", "-i"])
+        .arg(input)
+        .args(["-vn", "-ac", "1", "-ar", &RATE.to_string(), "-f", "s16le", "-"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().context("não foi possível executar o ffmpeg")?;
+    let mut out = child.stdout.take().unwrap();
+    let chunk = (RATE as f64 * LOUDNESS_STEP) as usize * 2;
+    let mut buf = vec![0u8; chunk];
+    let mut levels = Vec::new();
+    loop {
+        if cancel.is_cancelled() {
+            crate::process::kill(&mut child);
+            bail!(crate::process::Cancelled);
+        }
+        let mut filled = 0;
+        while filled < chunk {
+            match out.read(&mut buf[filled..])? {
+                0 => break,
+                n => filled += n,
+            }
+        }
+        if filled < 2 {
+            break;
+        }
+        let samples = filled / 2;
+        let sum: f64 = buf[..samples * 2]
+            .chunks_exact(2)
+            .map(|b| {
+                let v = i16::from_le_bytes([b[0], b[1]]) as f64 / 32768.0;
+                v * v
+            })
+            .sum();
+        let rms = (sum / samples as f64).sqrt();
+        levels.push((20.0 * rms.max(1e-5).log10()) as f32);
+        if filled < chunk {
+            break;
+        }
+    }
+    let _ = child.wait();
+    Ok(levels)
+}
+
 /// Gera uma miniatura JPG do vídeo.
 pub fn thumbnail(ffmpeg: &Path, video: &Path, out: &Path, at: f64, cancel: &Cancel) -> Result<()> {
     let mut cmd = command(ffmpeg);

@@ -94,6 +94,7 @@
 
       <div class="actions">
         <button class="primary" id="btn-start">✨ Gerar cortes</button>
+        <label class="check inline"><input id="opt-reanalyze" type="checkbox" /> Refazer do zero (ignorar cache)</label>
         <button class="link" id="btn-save-defaults">Salvar estas opções como padrão</button>
       </div>
     </section>
@@ -120,6 +121,7 @@
         <h2 id="results-title">Cortes</h2>
         <button class="secondary" id="btn-open-folder">Abrir pasta</button>
       </div>
+      <div class="warnings hidden" id="results-warnings"></div>
       <div class="clips" id="clips"></div>
     </section>
   </main>
@@ -145,18 +147,40 @@
       <div class="tabs">
         <button class="tab active" data-tab="tab-ai">IA</button>
         <button class="tab" data-tab="tab-transcription">Transcrição</button>
-        <button class="tab" data-tab="tab-tools">Ferramentas</button>
+        <button class="tab" data-tab="tab-tools">Ferramentas e modelos</button>
         <button class="tab" data-tab="tab-output">Saída</button>
       </div>
 
       <div class="tab-body" id="tab-ai">
         <label class="block">Quem escolhe os cortes
           <select id="s-llm">
-            <option value="anthropic">Claude (Anthropic)</option>
-            <option value="open_ai">OpenAI</option>
+            <option value="local">IA local — llama.cpp (offline, padrão)</option>
+            <option value="ollama">IA local — Ollama já instalado</option>
+            <option value="anthropic">Claude (Anthropic) — online, opcional</option>
+            <option value="open_ai">OpenAI ou compatível — online, opcional</option>
           </select>
         </label>
-        <fieldset>
+        <fieldset data-provider="local">
+          <legend>IA local (llama.cpp)</legend>
+          <label class="block">Modelo
+            <select id="s-llm-model"></select>
+          </label>
+          <div class="grid three">
+            <label>Trechos avaliados <input id="s-llm-candidates" type="number" min="4" max="60" /></label>
+            <label>Contexto (tokens) <input id="s-llm-context" type="number" min="2048" max="65536" step="1024" /></label>
+            <label><span>Threads <span class="muted">(0 = auto)</span></span><input id="s-llm-threads" type="number" min="0" max="64" /></label>
+          </div>
+          <p class="muted small">Mais trechos avaliados = cortes melhores, porém mais demora (cerca de 10–30 s por trecho em CPU).</p>
+        </fieldset>
+        <fieldset data-provider="ollama">
+          <legend>Ollama</legend>
+          <div class="grid two">
+            <label>URL <input id="s-ollama-url" type="text" /></label>
+            <label>Modelo <input id="s-ollama-model" type="text" placeholder="qwen3.5:4b" /></label>
+          </div>
+          <label class="block">Trechos avaliados <input id="s-llm-candidates-2" type="number" min="4" max="60" /></label>
+        </fieldset>
+        <fieldset data-provider="anthropic">
           <legend>Anthropic (Claude)</legend>
           <label class="block">Chave da API <input id="s-anthropic-key" type="password" placeholder="sk-ant-…" /></label>
           <div class="grid two">
@@ -164,7 +188,7 @@
             <label>URL da API <input id="s-anthropic-url" type="text" /></label>
           </div>
         </fieldset>
-        <fieldset>
+        <fieldset data-provider="open_ai">
           <legend>OpenAI (ou compatível)</legend>
           <label class="block">Chave da API <input id="s-openai-key" type="password" placeholder="sk-…" /></label>
           <div class="grid two">
@@ -178,8 +202,8 @@
       <div class="tab-body hidden" id="tab-transcription">
         <label class="block">Motor de transcrição
           <select id="s-engine">
-            <option value="local">Whisper local (grátis, offline)</option>
-            <option value="open_ai">API OpenAI (rápido, pago)</option>
+            <option value="local">Whisper local (offline, padrão)</option>
+            <option value="open_ai">API OpenAI ou compatível (online, opcional)</option>
           </select>
         </label>
         <fieldset>
@@ -190,25 +214,30 @@
           <label class="block"><span>Threads <span class="muted">(0 = automático)</span></span>
             <input id="s-whisper-threads" type="number" min="0" max="64" />
           </label>
+          <label class="check"><input id="s-vad" type="checkbox" /> Pular silêncio e música (detector de voz — mais rápido)</label>
         </fieldset>
         <fieldset>
-          <legend>API</legend>
+          <legend>API (opcional)</legend>
           <label class="block">Modelo de transcrição <input id="s-openai-tmodel" type="text" /></label>
           <p class="muted small">Ex.: <code>whisper-1</code> na OpenAI, ou <code>whisper-large-v3</code> no Groq
-            (URL <code>https://api.groq.com/openai/v1</code>).</p>
+            (URL <code>https://api.groq.com/openai/v1</code>). Chave e URL ficam na aba IA.</p>
         </fieldset>
       </div>
 
       <div class="tab-body hidden" id="tab-tools">
         <div id="tools-table" class="tools-table"></div>
         <fieldset>
-          <legend>Instalar / atualizar automaticamente</legend>
-          <label class="block">Modelo do Whisper para baixar
-            <select id="install-model"></select>
-          </label>
+          <legend>Baixar / atualizar</legend>
+          <div class="grid two">
+            <label>Modelo de transcrição (Whisper) <select id="install-whisper"></select></label>
+            <label>Modelo de IA local <select id="install-llm"></select></label>
+          </div>
+          <label class="check"><input id="install-vad" type="checkbox" checked /> Detector de voz (1 MB)</label>
+          <p class="muted small" id="install-estimate"></p>
           <div class="actions">
             <button class="primary" id="btn-install">Instalar o que falta</button>
-            <button class="secondary" id="btn-update">Atualizar tudo</button>
+            <button class="secondary" id="btn-update">Atualizar ferramentas</button>
+            <button class="secondary" id="btn-import">Importar modelos de uma pasta…</button>
             <button class="ghost danger hidden" id="btn-install-cancel">Cancelar</button>
           </div>
           <div class="bar small hidden" id="install-bar"><div id="install-fill"></div></div>
@@ -220,6 +249,7 @@
           <div class="path-row"><label>ffprobe <input id="s-ffprobe" type="text" /></label><button class="secondary" data-pick="s-ffprobe">…</button></div>
           <div class="path-row"><label>yt-dlp <input id="s-ytdlp" type="text" /></label><button class="secondary" data-pick="s-ytdlp">…</button></div>
           <div class="path-row"><label>whisper-cli <input id="s-whisper" type="text" /></label><button class="secondary" data-pick="s-whisper">…</button></div>
+          <div class="path-row"><label>llama-server <input id="s-llama" type="text" /></label><button class="secondary" data-pick="s-llama">…</button></div>
         </fieldset>
       </div>
 
@@ -247,11 +277,49 @@
             <input id="s-crf" type="number" min="14" max="32" />
           </label>
         </div>
+        <fieldset>
+          <legend>Cache</legend>
+          <label class="check"><input id="s-cache" type="checkbox" /> Reaproveitar transcrições, análises e downloads já feitos</label>
+          <div class="actions"><button class="secondary" id="btn-clear-cache">Limpar cache</button></div>
+        </fieldset>
       </div>
 
       <div class="modal-foot">
         <span class="muted small" id="settings-status"></span>
         <button class="primary" id="btn-save-settings">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assistente de primeira abertura -->
+  <div class="modal hidden" id="setup-modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>Bem-vindo ao BWSmartClips 👋</h2>
+      </div>
+      <div class="tab-body">
+        <p>O BWSmartClips funciona <b>100% offline</b>: transcrição, IA que escolhe os cortes, legendas e
+          renderização rodam no seu computador. Para isso, ele precisa baixar algumas ferramentas e modelos
+          <b>uma única vez</b>.</p>
+        <label class="block">Transcrição (Whisper)
+          <select id="setup-whisper"></select>
+        </label>
+        <label class="block">IA que escolhe os cortes
+          <select id="setup-llm"></select>
+        </label>
+        <label class="check"><input id="setup-vad" type="checkbox" checked /> Detector de voz (deixa a transcrição mais rápida)</label>
+        <div class="space-info" id="setup-space"></div>
+        <div class="bar small hidden" id="setup-bar"><div id="setup-fill"></div></div>
+        <p class="muted small" id="setup-msg"></p>
+        <p class="muted small">Sem internet neste PC? Baixe os arquivos em outro computador, copie para um pendrive e use
+          <b>Importar modelos</b>. As APIs online (Claude/OpenAI) continuam opcionais em Configurações.</p>
+      </div>
+      <div class="modal-foot">
+        <button class="link" id="setup-skip">Pular por enquanto</button>
+        <div class="actions tight">
+          <button class="secondary" id="setup-import">Importar modelos…</button>
+          <button class="primary" id="setup-go">Baixar e instalar</button>
+        </div>
       </div>
     </div>
   </div>

@@ -20,9 +20,22 @@ pub enum TranscriptionEngine {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmProvider {
+    /// IA local com llama.cpp (`llama-server`) — padrão, 100% offline.
     #[default]
+    Local,
+    /// IA local servida por um Ollama já instalado.
+    Ollama,
+    /// API da Anthropic (Claude) — opcional, precisa de internet.
     Anthropic,
+    /// API da OpenAI ou compatível — opcional, precisa de internet.
     OpenAi,
+}
+
+impl LlmProvider {
+    /// Provedores que rodam no próprio computador.
+    pub fn is_local(self) -> bool {
+        matches!(self, LlmProvider::Local | LlmProvider::Ollama)
+    }
 }
 
 /// Como transformar o vídeo em vertical.
@@ -111,6 +124,8 @@ pub struct ClipOptions {
     pub focus: String,
     pub reframe: ReframeMode,
     pub captions: CaptionStyle,
+    /// Ignora o cache e refaz transcrição e análise.
+    pub reanalyze: bool,
 }
 
 impl Default for ClipOptions {
@@ -123,6 +138,7 @@ impl Default for ClipOptions {
             focus: String::new(),
             reframe: ReframeMode::Face,
             captions: CaptionStyle::default(),
+            reanalyze: false,
         }
     }
 }
@@ -143,6 +159,8 @@ pub struct Settings {
     pub whisper_model: String,
     /// Threads do whisper.cpp (0 = automático).
     pub whisper_threads: usize,
+    /// Pula silêncio e música antes de transcrever (detector de voz Silero).
+    pub whisper_vad: bool,
 
     pub transcription: TranscriptionEngine,
     pub openai_api_key: String,
@@ -150,6 +168,22 @@ pub struct Settings {
     pub openai_transcription_model: String,
 
     pub llm_provider: LlmProvider,
+
+    // IA local (llama.cpp)
+    pub llama_path: String,
+    /// Arquivo .gguf do modelo (vazio = procurar na pasta de modelos).
+    pub llm_model: String,
+    /// Threads da IA local (0 = automático).
+    pub llm_threads: usize,
+    /// Tamanho do contexto da IA local, em tokens.
+    pub llm_context: u32,
+    /// Quantos trechos candidatos a IA local avalia.
+    pub llm_candidates: usize,
+
+    // Ollama (opcional)
+    pub ollama_base_url: String,
+    pub ollama_model: String,
+
     pub anthropic_api_key: String,
     pub anthropic_base_url: String,
     pub anthropic_model: String,
@@ -160,6 +194,11 @@ pub struct Settings {
     pub x264_crf: u32,
     /// Altura do vídeo final em modo vertical (1920 ou 1280).
     pub output_height: u32,
+
+    /// Reaproveita transcrições, análises e downloads já feitos.
+    pub use_cache: bool,
+    /// O assistente de primeira abertura já foi concluído.
+    pub setup_done: bool,
 
     /// Opções padrão para novos trabalhos.
     pub defaults: ClipOptions,
@@ -175,11 +214,19 @@ impl Default for Settings {
             whisper_path: String::new(),
             whisper_model: String::new(),
             whisper_threads: 0,
+            whisper_vad: true,
             transcription: TranscriptionEngine::Local,
             openai_api_key: String::new(),
             openai_base_url: "https://api.openai.com/v1".into(),
             openai_transcription_model: "whisper-1".into(),
-            llm_provider: LlmProvider::Anthropic,
+            llm_provider: LlmProvider::Local,
+            llama_path: String::new(),
+            llm_model: String::new(),
+            llm_threads: 0,
+            llm_context: 8192,
+            llm_candidates: 16,
+            ollama_base_url: "http://127.0.0.1:11434".into(),
+            ollama_model: "qwen3.5:4b".into(),
             anthropic_api_key: String::new(),
             anthropic_base_url: "https://api.anthropic.com".into(),
             anthropic_model: "claude-sonnet-5-5".into(),
@@ -187,6 +234,8 @@ impl Default for Settings {
             x264_preset: "veryfast".into(),
             x264_crf: 20,
             output_height: 1920,
+            use_cache: true,
+            setup_done: false,
             defaults: ClipOptions::default(),
         }
     }
@@ -205,9 +254,14 @@ pub fn tools_dir() -> PathBuf {
     app_data_dir().join("tools")
 }
 
-/// Onde ficam os modelos do whisper.cpp.
+/// Onde ficam os modelos (Whisper, detector de voz e IA local).
 pub fn models_dir() -> PathBuf {
     app_data_dir().join("models")
+}
+
+/// Cache de transcrições, análises e downloads.
+pub fn cache_dir() -> PathBuf {
+    app_data_dir().join("cache")
 }
 
 fn default_output_dir() -> PathBuf {
@@ -252,5 +306,13 @@ mod tests {
         assert_eq!(s.defaults.clip_count, 3);
         assert_eq!(s.defaults.max_duration, 75.0);
         assert!(s.defaults.captions.enabled);
+    }
+
+    #[test]
+    fn offline_by_default() {
+        let s = Settings::default();
+        assert_eq!(s.transcription, TranscriptionEngine::Local);
+        assert!(s.llm_provider.is_local());
+        assert!(s.whisper_vad && s.use_cache && !s.setup_done);
     }
 }

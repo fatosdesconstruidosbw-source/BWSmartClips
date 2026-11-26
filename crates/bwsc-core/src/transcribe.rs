@@ -34,7 +34,15 @@ pub fn transcribe(
             on_progress(0.0, "Extraindo áudio…");
             let wav = work.join("audio.wav");
             media::extract_wav(ffmpeg, video, &wav, cancel)?;
-            transcribe_local(whisper, model, &wav, language, settings.whisper_threads, work, cancel, on_progress)
+            let vad = if settings.whisper_vad { tools.vad_model.as_deref() } else { None };
+            match transcribe_local(whisper, model, vad, &wav, language, settings.whisper_threads, work, cancel, on_progress) {
+                // Versões antigas do whisper.cpp não têm VAD: tenta de novo sem ele.
+                Err(e) if vad.is_some() && !crate::process::is_cancelled_error(&e) => {
+                    on_progress(0.0, "Transcrevendo sem detector de voz…");
+                    transcribe_local(whisper, model, None, &wav, language, settings.whisper_threads, work, cancel, on_progress)
+                }
+                other => other,
+            }
         }
         TranscriptionEngine::OpenAi => {
             transcribe_openai(settings, ffmpeg, video, duration, language, work, cancel, on_progress)
@@ -69,6 +77,7 @@ struct WhisperOffsets {
 pub fn transcribe_local(
     whisper: &Path,
     model: &Path,
+    vad_model: Option<&Path>,
     wav: &Path,
     language: &str,
     threads: usize,
@@ -93,6 +102,10 @@ pub fn transcribe_local(
         .args(["-ml", "1", "-sow", "-oj", "-pp"])
         .arg("-of")
         .arg(&out_base);
+    if let Some(vad) = vad_model {
+        // Pula silêncio e música (detector de voz Silero): bem mais rápido.
+        cmd.arg("--vad").arg("-vm").arg(vad);
+    }
     on_progress(0.02, "Transcrevendo com Whisper local…");
     run_lines(cmd, cancel, |stream, line| {
         if stream == Stream::Stderr {

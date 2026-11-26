@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::cache::{params_key, source_key, Cache};
 use crate::clips::{refine, ClipPlan};
-use crate::config::{ClipOptions, Settings};
+use crate::config::{ClipOptions, LlmProvider, Settings, TranscriptionEngine};
 use crate::download;
 use crate::llm;
+use crate::local_ai;
 use crate::media::{self, MediaInfo};
-use crate::process::Cancel;
+use crate::process::{is_cancelled_error, Cancel};
+use crate::selector;
 use crate::render::{self, RenderJob};
 use crate::tools::Tools;
 use crate::transcribe;
@@ -71,6 +74,9 @@ pub struct JobResult {
     pub source_title: String,
     pub source_file: PathBuf,
     pub clips: Vec<ClipResult>,
+    /// Avisos para o usuário (ex.: IA local indisponível, usado plano B).
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Faixas de progresso de cada etapa.
@@ -78,9 +84,9 @@ fn span(stage: Stage) -> (f32, f32) {
     match stage {
         Stage::Download => (0.0, 0.12),
         Stage::Probe => (0.12, 0.14),
-        Stage::Transcribe => (0.14, 0.50),
-        Stage::Analyze => (0.50, 0.58),
-        Stage::Render => (0.58, 1.0),
+        Stage::Transcribe => (0.14, 0.45),
+        Stage::Analyze => (0.45, 0.65),
+        Stage::Render => (0.65, 1.0),
         Stage::Done => (1.0, 1.0),
     }
 }
@@ -137,23 +143,36 @@ pub fn run_job(
     let ffprobe = tools.ffprobe()?.to_path_buf();
     let base = PathBuf::from(&settings.output_dir);
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    // Downloads são sempre reaproveitados (se o cache estiver ligado);
+    // transcrição e análise são refeitas quando o usuário pede "refazer do zero".
+    let download_cache = Cache::new(settings.use_cache);
+    let cache = Cache::new(settings.use_cache && !opts.reanalyze);
+    let mut warnings = Vec::new();
 
     // 1) Fonte
     let (source_file, title, project_dir) = match source {
-        Source::Url(url) => {
-            let ytdlp = tools.ytdlp()?.to_path_buf();
-            let dir = base.join(format!("{stamp}-download"));
-            report(on_progress, Stage::Download, 0.0, "Baixando vídeo…");
-            let d = download::download(&ytdlp, &ffmpeg, url, &dir, cancel, |p, _| {
-                report(on_progress, Stage::Download, p, format!("Baixando vídeo… {:.0}%", p * 100.0))
-            })?;
-            let final_dir = base.join(format!("{stamp}-{}", slug(&d.title, 40)));
-            let (file, dir) = match std::fs::rename(&dir, &final_dir) {
-                Ok(()) => (final_dir.join(d.path.file_name().unwrap_or_default()), final_dir),
-                Err(_) => (d.path.clone(), dir),
-            };
-            (file, d.title, dir)
-        }
+        Source::Url(url) => match download_cache.downloaded(url) {
+            Some((file, title)) => {
+                report(on_progress, Stage::Download, 1.0, "Vídeo já baixado antes — reaproveitando");
+                let dir = base.join(format!("{stamp}-{}", slug(&title, 40)));
+                (file, title, dir)
+            }
+            None => {
+                let ytdlp = tools.ytdlp()?.to_path_buf();
+                let dir = base.join(format!("{stamp}-download"));
+                report(on_progress, Stage::Download, 0.0, "Baixando vídeo…");
+                let d = download::download(&ytdlp, &ffmpeg, url, &dir, cancel, |p, _| {
+                    report(on_progress, Stage::Download, p, format!("Baixando vídeo… {:.0}%", p * 100.0))
+                })?;
+                let final_dir = base.join(format!("{stamp}-{}", slug(&d.title, 40)));
+                let (file, dir) = match std::fs::rename(&dir, &final_dir) {
+                    Ok(()) => (final_dir.join(d.path.file_name().unwrap_or_default()), final_dir),
+                    Err(_) => (d.path.clone(), dir),
+                };
+                download_cache.remember_download(url, &file, &d.title);
+                (file, d.title, dir)
+            }
+        },
         Source::File(path) => {
             if !path.is_file() {
                 anyhow::bail!("arquivo não encontrado: {}", path.display());
@@ -167,6 +186,7 @@ pub fn run_job(
         .with_context(|| format!("não foi possível criar a pasta {}", project_dir.display()))?;
     let work = project_dir.join(".work");
     std::fs::create_dir_all(&work)?;
+    let src_key = source_key(&source_file).unwrap_or_else(|| stamp.clone());
 
     // 2) Informações
     report(on_progress, Stage::Probe, 0.0, "Lendo informações do vídeo…");
@@ -175,38 +195,151 @@ pub fn run_job(
         anyhow::bail!("o vídeo não tem áudio — não há fala para transcrever");
     }
 
-    // 3) Transcrição
-    report(on_progress, Stage::Transcribe, 0.0, "Transcrevendo…");
-    let transcript = transcribe::transcribe(
-        settings,
-        &tools,
-        &source_file,
-        info.duration,
-        &opts.language,
-        &work,
-        cancel,
-        &mut |p, m| report(on_progress, Stage::Transcribe, p, m),
-    )?;
+    // 3) Transcrição (com cache)
+    let engine_id = match settings.transcription {
+        TranscriptionEngine::Local => format!(
+            "local:{}:{}",
+            tools.whisper_model.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            settings.whisper_vad && tools.vad_model.is_some()
+        ),
+        TranscriptionEngine::OpenAi => format!("api:{}:{}", settings.openai_base_url, settings.openai_transcription_model),
+    };
+    let tkey = format!("{src_key}-{}", params_key(&(&engine_id, &opts.language)));
+    let transcript = match cache.get::<Transcript>("transcripts", &tkey) {
+        Some(t) => {
+            report(on_progress, Stage::Transcribe, 1.0, "Transcrição reaproveitada do cache");
+            t
+        }
+        None => {
+            report(on_progress, Stage::Transcribe, 0.0, "Transcrevendo…");
+            let t = transcribe::transcribe(
+                settings,
+                &tools,
+                &source_file,
+                info.duration,
+                &opts.language,
+                &work,
+                cancel,
+                &mut |p, m| report(on_progress, Stage::Transcribe, p, m),
+            )?;
+            Cache::new(settings.use_cache).put("transcripts", &tkey, &t);
+            t
+        }
+    };
     std::fs::write(project_dir.join("transcricao.json"), serde_json::to_string_pretty(&transcript)?)?;
 
-    // 4) IA
-    report(on_progress, Stage::Analyze, 0.0, "IA procurando os melhores momentos…");
-    let candidates = llm::find_candidates(settings, &transcript, opts, cancel, &mut |p, m| {
-        report(on_progress, Stage::Analyze, p, m)
-    })?;
-    let plans = refine(candidates, &transcript, opts, info.duration);
+    // 4) Análise (com cache)
+    let model_id = match settings.llm_provider {
+        LlmProvider::Local => tools.llm_model.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        LlmProvider::Ollama => settings.ollama_model.clone(),
+        LlmProvider::Anthropic => settings.anthropic_model.clone(),
+        LlmProvider::OpenAi => settings.openai_llm_model.clone(),
+    };
+    let akey = format!(
+        "{src_key}-{}",
+        params_key(&(
+            &tkey,
+            settings.llm_provider,
+            &model_id,
+            opts.clip_count,
+            opts.min_duration,
+            opts.max_duration,
+            &opts.focus,
+            settings.llm_candidates,
+        ))
+    );
+    let plans = match cache.get::<Vec<ClipPlan>>("analysis", &akey) {
+        Some(p) if !p.is_empty() => {
+            report(on_progress, Stage::Analyze, 1.0, "Análise reaproveitada do cache");
+            p
+        }
+        _ => {
+            let (plans, complete) = analyze(settings, &tools, &transcript, &info, &ffmpeg, &source_file, opts, &work, cancel, &mut warnings, on_progress)?;
+            // Resultados do plano B (sem IA) não vão para o cache, para a IA ser usada da próxima vez.
+            if complete {
+                Cache::new(settings.use_cache).put("analysis", &akey, &plans);
+            }
+            plans
+        }
+    };
     if plans.is_empty() {
-        anyhow::bail!("a IA não encontrou trechos válidos com a duração pedida — tente aumentar a duração máxima");
+        anyhow::bail!("não foram encontrados trechos válidos com a duração pedida — tente aumentar a duração máxima");
     }
 
     // 5) Renderização
     let clips = render_plans(&plans, &transcript, &info, &ffmpeg, &source_file, opts, settings, &project_dir, &work, cancel, on_progress)?;
 
-    let result = JobResult { project_dir: project_dir.clone(), source_title: title, source_file, clips };
+    let result = JobResult { project_dir: project_dir.clone(), source_title: title, source_file, clips, warnings };
     std::fs::write(project_dir.join("cortes.json"), serde_json::to_string_pretty(&result)?)?;
     let _ = std::fs::remove_dir_all(&work);
     report(on_progress, Stage::Done, 1.0, format!("{} cortes prontos!", result.clips.len()));
     Ok(result)
+}
+
+/// Escolhe os cortes. Devolve também se a IA foi usada (`false` = plano B por regras).
+#[allow(clippy::too_many_arguments)]
+fn analyze(
+    settings: &Settings,
+    tools: &Tools,
+    transcript: &Transcript,
+    info: &MediaInfo,
+    ffmpeg: &Path,
+    source_file: &Path,
+    opts: &ClipOptions,
+    work: &Path,
+    cancel: &Cancel,
+    warnings: &mut Vec<String>,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<(Vec<ClipPlan>, bool)> {
+    if !settings.llm_provider.is_local() {
+        report(on_progress, Stage::Analyze, 0.0, "IA procurando os melhores momentos…");
+        let candidates = llm::find_candidates(settings, transcript, opts, cancel, &mut |p, m| {
+            report(on_progress, Stage::Analyze, p, m)
+        })?;
+        return Ok((refine(candidates, transcript, opts, info.duration), true));
+    }
+
+    report(on_progress, Stage::Analyze, 0.0, "Medindo a energia do áudio…");
+    let levels = media::loudness_profile(ffmpeg, source_file, cancel).ok();
+    cancel.check()?;
+    report(on_progress, Stage::Analyze, 0.05, "Carregando a IA local…");
+    let backend = match local_ai::start_backend(settings, tools, work, cancel) {
+        Ok(b) => Some(b),
+        Err(e) if is_cancelled_error(&e) => return Err(e),
+        Err(e) => {
+            warnings.push(format!(
+                "A IA local não pôde ser usada ({}). Os cortes foram escolhidos só por regras automáticas — \
+                 instale a IA local em Configurações → Ferramentas para resultados melhores.",
+                first_line(&format!("{e:#}"))
+            ));
+            None
+        }
+    };
+    let (plans, report) = selector::select(
+        backend.as_deref(),
+        transcript,
+        levels.as_deref(),
+        opts,
+        settings.llm_candidates,
+        info.duration,
+        cancel,
+        &mut |p, m| report(on_progress, Stage::Analyze, 0.08 + p * 0.92, m),
+    )?;
+    if report.failed > 0 {
+        warnings.push(format!(
+            "A IA local falhou em {} de {} trechos (esses ficaram com a nota das regras). Primeiro erro: {}",
+            report.failed,
+            report.ok + report.failed,
+            first_line(report.first_error.as_deref().unwrap_or_default())
+        ));
+    }
+    // Só vai para o cache se a IA avaliou a maioria dos trechos.
+    let trustworthy = backend.is_some() && report.ok >= report.failed;
+    Ok((plans, trustworthy))
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or_default().to_string()
 }
 
 /// Renderiza uma lista de cortes já planejados (usado também pela CLI).

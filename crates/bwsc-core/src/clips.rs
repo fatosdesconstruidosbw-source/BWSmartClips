@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(p.title, "frase2 fim2.");
         for p in &plans {
             let core = p.duration() - PAD_START - PAD_END;
-            assert!(core <= 30.0 + 1e-9 && core >= 19.0, "dur {core}");
+            assert!((19.0..=30.0 + 1e-9).contains(&core), "dur {core}");
         }
     }
 }

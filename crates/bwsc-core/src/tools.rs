@@ -14,6 +14,12 @@ pub struct Tools {
     pub ytdlp: Option<PathBuf>,
     pub whisper: Option<PathBuf>,
     pub whisper_model: Option<PathBuf>,
+    /// Detector de voz (Silero) do whisper.cpp.
+    pub vad_model: Option<PathBuf>,
+    /// `llama-server` do llama.cpp (IA local).
+    pub llama: Option<PathBuf>,
+    /// Modelo .gguf da IA local.
+    pub llm_model: Option<PathBuf>,
 }
 
 impl Tools {
@@ -26,7 +32,22 @@ impl Tools {
                 .or_else(|| find_exe("whisper-cpp", ""))
                 .or_else(|| find_exe("whisper", "").filter(|p| is_whisper_cpp(p))),
             whisper_model: find_model(&settings.whisper_model),
+            vad_model: find_in_models(|n| n.starts_with("ggml-silero") && n.ends_with(".bin"), false),
+            llama: find_exe("llama-server", &settings.llama_path),
+            llm_model: find_llm_model(&settings.llm_model),
         }
+    }
+
+    pub fn llama(&self) -> Result<&Path> {
+        self.llama.as_deref().ok_or_else(|| missing("llama-server (llama.cpp)"))
+    }
+    pub fn llm_model(&self) -> Result<&Path> {
+        self.llm_model.as_deref().ok_or_else(|| {
+            anyhow!(
+                "Nenhum modelo de IA local encontrado. Use \"Instalar ferramentas\" ou coloque um arquivo .gguf em {}",
+                models_dir().display()
+            )
+        })
     }
 
     pub fn ffmpeg(&self) -> Result<&Path> {
@@ -79,6 +100,7 @@ pub fn find_exe(name: &str, configured: &str) -> Option<PathBuf> {
     dirs.push(td.clone());
     dirs.push(td.join("whisper"));
     dirs.push(td.join("ffmpeg"));
+    dirs.push(td.join("llama"));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
             dirs.push(d.to_path_buf());
@@ -96,21 +118,44 @@ fn is_whisper_cpp(p: &Path) -> bool {
     p.starts_with(tools_dir())
 }
 
-/// Modelo configurado ou o maior `ggml-*.bin` da pasta de modelos.
+/// Modelo Whisper configurado ou o maior `ggml-*.bin` da pasta de modelos.
 pub fn find_model(configured: &str) -> Option<PathBuf> {
     let configured = configured.trim();
     if !configured.is_empty() {
         let p = PathBuf::from(configured);
         return p.is_file().then_some(p);
     }
+    find_in_models(|n| n.starts_with("ggml-") && n.ends_with(".bin") && !n.contains("silero"), true)
+}
+
+/// Modelo de IA configurado ou um `.gguf` da pasta de modelos
+/// (prefere o recomendado; senão o menor, que é o mais rápido).
+pub fn find_llm_model(configured: &str) -> Option<PathBuf> {
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        let p = PathBuf::from(configured);
+        return p.is_file().then_some(p);
+    }
+    let recommended = crate::installer::LLM_MODELS.iter().find(|m| m.recommended).map(|m| m.file);
+    if let Some(file) = recommended {
+        let p = models_dir().join(file);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    find_in_models(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"), false)
+}
+
+/// Procura na pasta de modelos; `largest` escolhe o maior arquivo, senão o menor.
+fn find_in_models(filter: impl Fn(&str) -> bool, largest: bool) -> Option<PathBuf> {
     let entries = std::fs::read_dir(models_dir()).ok()?;
-    entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("ggml-") && n.ends_with(".bin"))
-        })
-        .max_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+    let files = entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| {
+        p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| filter(&n.to_lowercase()))
+    });
+    let size = |p: &PathBuf| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    if largest {
+        files.max_by_key(size)
+    } else {
+        files.min_by_key(size)
+    }
 }

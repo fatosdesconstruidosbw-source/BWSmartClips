@@ -322,7 +322,17 @@ fn analyze(
     cancel.check()?;
     report(on_progress, Stage::Analyze, 0.05, "Carregando a IA local…");
     let backend = match local_ai::start_backend(settings, tools, work, cancel) {
-        Ok(b) => Some(b),
+        Ok(b) => {
+            if let Some(w) = b.warning {
+                warnings.push(w);
+            }
+            let msg = match &b.gpu {
+                Some(g) => format!("IA local na placa de vídeo: {}", g.split(" (").next().unwrap_or(g)),
+                None => "IA local no processador".to_string(),
+            };
+            report(on_progress, Stage::Analyze, 0.08, &msg);
+            Some(b.chat)
+        }
         Err(e) if is_cancelled_error(&e) => return Err(e),
         Err(e) => {
             warnings.push(format!(

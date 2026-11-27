@@ -341,13 +341,14 @@ async function refreshTools() {
   if (localWhisper && !t.whisper_model) missing.push("modelo do Whisper");
   if (localAi && !t.llama) missing.push("llama-server (IA local)");
   if (localAi && !t.llm_model) missing.push("modelo de IA local");
+  if (localAi && settings.llm_gpu && st.tools_installer_supported && t.llama && !t.llama_gpu) missing.push("suporte à placa de vídeo");
   $("tools-missing").textContent = missing.join(", ");
   $("tools-banner").classList.toggle("hidden", missing.length === 0);
 
   const rows = [
     ["ffmpeg", t.ffmpeg], ["ffprobe", t.ffprobe], ["yt-dlp", t.ytdlp],
     ["whisper-cli", t.whisper], ["modelo Whisper", t.whisper_model], ["detector de voz", t.vad_model],
-    ["llama-server", t.llama], ["modelo de IA", t.llm_model],
+    ["llama-server", t.llama], ["llama-server (placa de vídeo)", t.llama_gpu], ["modelo de IA", t.llm_model],
   ];
   $("tools-table").innerHTML = rows
     .map(([n, p]) => `<div>${p ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'} ${n}</div>
@@ -361,10 +362,31 @@ async function refreshTools() {
   ["install-whisper", "install-llm", "setup-whisper", "setup-llm"].forEach((id) => fillCatalog($(id)));
   renderModelsDir(st);
   renderDataDir(st);
+  refreshGpu();
   setInstalling(st.installing);
   $("btn-update").classList.toggle("hidden", !st.tools_installer_supported);
   updateEstimates();
   return st;
+}
+
+// Placa de vídeo para a IA local.
+async function refreshGpu() {
+  const el = $("gpu-status");
+  el.textContent = "Procurando a placa de vídeo…";
+  let g;
+  try { g = await invoke("gpu_info"); } catch (_) { el.textContent = ""; return; }
+  if (!g.installed) {
+    el.innerHTML = toolStatus?.tools_installer_supported
+      ? 'Suporte à placa de vídeo não instalado — use <b>Instalar o que falta</b> em Ferramentas e modelos.'
+      : "Neste sistema, use um llama-server compilado com suporte à sua placa.";
+  } else if (g.device) {
+    const [name, mem] = g.device.split(" (");
+    el.innerHTML = `Placa de vídeo encontrada: <b>${esc(name)}</b>${mem ? ` (${esc(mem.replace(")", "").replace("free", "livres"))})` : ""}`;
+  } else {
+    el.textContent = g.all.length
+      ? "Só há vídeo integrado neste PC — a IA vai usar o processador."
+      : "Nenhuma placa de vídeo compatível encontrada (atualize o driver de vídeo). A IA vai usar o processador.";
+  }
 }
 
 // Pasta do programa e dados de uma instalação anterior que ficaram no disco C.
@@ -558,7 +580,7 @@ const S_FIELDS = {
   "s-llama": "llama_path", "s-cookies": "youtube_cookies_file", "s-cookies-browser": "cookies_browser", "s-output": "output_dir", "s-height": "output_height",
   "s-preset": "x264_preset", "s-crf": "x264_crf",
 };
-const S_CHECKS = { "s-vad": "whisper_vad", "s-cache": "use_cache" };
+const S_CHECKS = { "s-vad": "whisper_vad", "s-cache": "use_cache", "s-llm-gpu": "llm_gpu" };
 const NUMERIC = new Set(["whisper_threads", "output_height", "x264_crf", "llm_context", "llm_threads", "llm_candidates"]);
 
 function showProviderFields() {

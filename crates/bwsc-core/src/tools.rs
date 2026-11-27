@@ -18,6 +18,8 @@ pub struct Tools {
     pub vad_model: Option<PathBuf>,
     /// `llama-server` do llama.cpp (IA local).
     pub llama: Option<PathBuf>,
+    /// `llama-server` com suporte a placa de vídeo (Vulkan), instalado à parte.
+    pub llama_gpu: Option<PathBuf>,
     /// Modelo .gguf da IA local.
     pub llm_model: Option<PathBuf>,
     /// Gerador de token do YouTube (bgutil-pot) e a pasta de plugins do yt-dlp.
@@ -37,6 +39,7 @@ impl Tools {
             whisper_model: find_model(&settings.whisper_model),
             vad_model: find_in_models(|n| n.starts_with("ggml-silero") && n.ends_with(".bin"), false),
             llama: find_exe("llama-server", &settings.llama_path),
+            llama_gpu: Some(tools_dir().join("llama-gpu").join(exe_name("llama-server"))).filter(|p| p.is_file()),
             llm_model: find_llm_model(&settings.llm_model),
             pot: find_pot(),
         }

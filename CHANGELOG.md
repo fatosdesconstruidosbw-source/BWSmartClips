@@ -16,6 +16,10 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   programa**, em vez do disco C.
 - Se já existia uma instalação no disco C, o app avisa e o botão **"Mover para a pasta do programa"** leva ferramentas,
   modelos e cache para a nova pasta (com progresso; as configurações são aproveitadas automaticamente).
+- **IA local na placa de vídeo** (AMD, NVIDIA ou Intel Arc, via Vulkan): a escolha dos cortes fica bem mais rápida e
+  modelos maiores (ex.: Qwen 9B) passam a ser viáveis. O app encontra a placa sozinho, ignora o vídeo integrado e,
+  se a placa falhar, volta para o processador com um aviso. Pode ser desligado em Configurações → IA. Para quem já
+  tem o app, "Instalar o que falta" baixa o suporte (~60 MB).
 - **Escolha a pasta dos modelos de IA** (Configurações → Ferramentas e modelos, e também na primeira configuração):
   guarde os modelos em outro disco (ex.: `D:`) para não lotar o C. Se você já tem arquivos `.gguf`/`.bin` numa pasta,
   é só escolher essa pasta: o app usa os modelos de lá, sem copiar. Os modelos que já estavam na pasta antiga continuam

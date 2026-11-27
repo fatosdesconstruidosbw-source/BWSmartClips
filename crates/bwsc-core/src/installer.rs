@@ -52,7 +52,9 @@ pub const VAD_MODEL: ModelInfo = ModelInfo {
 };
 
 /// Tamanho aproximado das ferramentas (ffmpeg, yt-dlp, Deno, whisper.cpp, llama.cpp).
-pub const TOOLS_SIZE_MB: u64 = 320;
+pub const TOOLS_SIZE_MB: u64 = 380;
+/// Tamanho aproximado do llama.cpp para placa de vídeo (Vulkan).
+pub const LLAMA_GPU_SIZE_MB: u64 = 60;
 
 const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
@@ -104,6 +106,8 @@ pub fn estimate_mb(req: &InstallRequest) -> u64 {
     let mut mb = 0;
     if cfg!(windows) && (req.force || !tools_dir().join("llama").join("llama-server.exe").exists()) {
         mb += TOOLS_SIZE_MB;
+    } else if cfg!(windows) && !tools_dir().join("llama-gpu").join("llama-server.exe").exists() {
+        mb += LLAMA_GPU_SIZE_MB;
     }
     let missing = |m: &ModelInfo| if find_model_file(m.file).is_some() { 0 } else { m.size_mb };
     if let Some(m) = whisper_model(&req.whisper_model) {
@@ -229,6 +233,29 @@ fn install_windows_tools(
         extract_flat(&zip, &llama_dir, &[".exe", ".dll"])?;
         if !llama_dir.join("llama-server.exe").exists() {
             bail!("o pacote do llama.cpp não contém llama-server.exe");
+        }
+    }
+    // llama.cpp para placa de vídeo (Vulkan: AMD, NVIDIA e Intel). Opcional: sem ele a IA usa o processador.
+    let gpu_dir = tools.join("llama-gpu");
+    if force || !gpu_dir.join("llama-server.exe").exists() {
+        step("llama-gpu", 0.0, "Procurando o llama.cpp para placa de vídeo…".into());
+        let res = (|| -> Result<()> {
+            let url = find_release_asset(client, LLAMA_REPO, is_llama_vulkan_asset).context("pacote Vulkan do llama.cpp não encontrado")?;
+            let zip = tmp.join("llama-gpu.zip");
+            download_file(client, &url, &zip, cancel, &mut |p, d, t| {
+                step("llama-gpu", p, format!("Baixando llama.cpp para placa de vídeo… {}", fmt_progress(d, t)))
+            })?;
+            std::fs::create_dir_all(&gpu_dir)?;
+            extract_flat(&zip, &gpu_dir, &[".exe", ".dll"])?;
+            if !gpu_dir.join("llama-server.exe").exists() {
+                bail!("o pacote não contém llama-server.exe");
+            }
+            Ok(())
+        })();
+        match res {
+            Ok(()) => {}
+            Err(e) if e.downcast_ref::<Cancelled>().is_some() => return Err(e),
+            Err(e) => step("llama-gpu", 1.0, format!("Não foi possível instalar o suporte à placa de vídeo (opcional): {e}")),
         }
     }
     // Token de origem do YouTube (opcional: sem ele o app usa login/cookies).
@@ -359,6 +386,10 @@ pub fn pick_asset(releases: &serde_json::Value, want: fn(&str) -> bool) -> Optio
 
 fn is_llama_cpu_asset(name: &str) -> bool {
     name.contains("bin-win-cpu-x64") && name.ends_with(".zip")
+}
+
+fn is_llama_vulkan_asset(name: &str) -> bool {
+    name.contains("bin-win-vulkan-x64") && name.ends_with(".zip")
 }
 
 /// Copia modelos (.bin/.gguf) de arquivos ou pastas (ex.: um pendrive) para a pasta de modelos.
@@ -698,6 +729,7 @@ mod tests {
             {"name": "llama-b9000-bin-win-cpu-x64.zip", "browser_download_url": "u3"}
         ]}]);
         assert_eq!(pick_asset(&rels, is_llama_cpu_asset).as_deref(), Some("u3"));
+        assert_eq!(pick_asset(&rels, is_llama_vulkan_asset), None);
     }
 
     #[test]
@@ -733,11 +765,13 @@ mod tests {
         assert!(w.ends_with("/whisper-bin-x64.zip"), "{w}");
         let l = find_release_asset(&c, LLAMA_REPO, is_llama_cpu_asset).unwrap();
         assert!(l.contains("bin-win-cpu-x64") && l.ends_with(".zip"), "{l}");
-        for url in [&w, &l] {
+        let v = find_release_asset(&c, LLAMA_REPO, is_llama_vulkan_asset).unwrap();
+        assert!(v.contains("bin-win-vulkan-x64") && v.ends_with(".zip"), "{v}");
+        for url in [&w, &l, &v] {
             let r = c.head(url.as_str()).send().unwrap();
             assert!(r.status().is_success(), "{url}: {}", r.status());
         }
-        eprintln!("whisper: {w}\nllama: {l}");
+        eprintln!("whisper: {w}\nllama: {l}\nllama vulkan: {v}");
         // Gerador de token do YouTube: mostra os arquivos publicados se não achar.
         let rels: serde_json::Value = c
             .get(format!("https://api.github.com/repos/{POT_REPO}/releases?per_page=5"))

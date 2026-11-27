@@ -202,6 +202,8 @@ pub struct Settings {
     pub llm_model: String,
     /// Threads da IA local (0 = automático).
     pub llm_threads: usize,
+    /// Usa a placa de vídeo (Vulkan: AMD, NVIDIA ou Intel) na IA local quando houver.
+    pub llm_gpu: bool,
     /// Tamanho do contexto da IA local, em tokens.
     pub llm_context: u32,
     /// Quantos trechos candidatos a IA local avalia.
@@ -256,6 +258,7 @@ impl Default for Settings {
             llama_path: String::new(),
             llm_model: String::new(),
             llm_threads: 0,
+            llm_gpu: true,
             llm_context: 8192,
             llm_candidates: 16,
             ollama_base_url: "http://127.0.0.1:11434".into(),

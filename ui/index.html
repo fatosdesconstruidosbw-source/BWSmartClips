@@ -267,7 +267,10 @@
             <label>Contexto (tokens) <input id="s-llm-context" type="number" min="2048" max="65536" step="1024" /></label>
             <label><span>Threads <span class="muted">(0 = auto)</span></span><input id="s-llm-threads" type="number" min="0" max="64" /></label>
           </div>
-          <p class="muted small">Mais trechos avaliados = cortes melhores, porém mais demora (cerca de 10–30 s por trecho em CPU).</p>
+          <label class="check"><input id="s-llm-gpu" type="checkbox" /> Usar a placa de vídeo quando houver (bem mais rápido)</label>
+          <p class="muted small gpu-status" id="gpu-status"></p>
+          <p class="muted small">Mais trechos avaliados = cortes melhores, porém mais demora (cerca de 10–30 s por trecho no processador;
+            na placa de vídeo, bem menos).</p>
         </fieldset>
         <fieldset data-provider="ollama">
           <legend>Ollama</legend>

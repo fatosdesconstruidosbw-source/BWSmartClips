@@ -169,6 +169,35 @@ async fn import_models(app: AppHandle) -> CmdResult<bool> {
     Ok(true)
 }
 
+#[derive(Serialize)]
+struct GpuInfo {
+    /// O suporte à placa de vídeo (llama.cpp Vulkan) está instalado.
+    installed: bool,
+    /// Placa que será usada, ex.: "AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)".
+    device: Option<String>,
+    /// Todas as placas encontradas (inclusive integradas, que são ignoradas).
+    all: Vec<String>,
+}
+
+/// Placa de vídeo que a IA local pode usar. Assíncrono: a consulta leva ~1 s na primeira vez.
+#[tauri::command]
+async fn gpu_info(app: AppHandle) -> GpuInfo {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let tools = Tools::locate(&settings);
+        match tools.llama_gpu {
+            Some(exe) => {
+                let all = bwsc_core::local_ai::gpu_devices(&exe);
+                let device = bwsc_core::local_ai::best_gpu(&all).map(|(_, d)| d);
+                GpuInfo { installed: true, device, all }
+            }
+            None => GpuInfo { installed: false, device: None, all: Vec::new() },
+        }
+    })
+    .await
+    .unwrap_or(GpuInfo { installed: false, device: None, all: Vec::new() })
+}
+
 /// Move ferramentas, modelos e cache de uma instalação anterior (disco C) para a pasta do programa.
 #[tauri::command]
 fn migrate_data(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
@@ -542,6 +571,7 @@ fn main() {
             default_output_dir,
             move_models,
             migrate_data,
+            gpu_info,
             open_output_dir
         ])
         .setup(|app| {

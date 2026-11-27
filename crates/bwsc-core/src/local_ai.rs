@@ -24,16 +24,122 @@ pub trait JsonChat {
     fn label(&self) -> String;
 }
 
+/// IA local já carregada, com o aparelho usado e um aviso (se a placa de vídeo falhou).
+pub struct Backend {
+    pub chat: Box<dyn JsonChat>,
+    /// Placa de vídeo usada (ex.: "AMD Radeon RX 570 Series"), ou `None` = processador.
+    pub gpu: Option<String>,
+    pub warning: Option<String>,
+}
+
 /// Inicia o backend local configurado (ou devolve erro explicando o que falta).
-pub fn start_backend(settings: &Settings, tools: &Tools, work: &Path, cancel: &Cancel) -> Result<Box<dyn JsonChat>> {
-    match settings.llm_provider {
-        LlmProvider::Ollama => Ok(Box::new(Ollama::connect(settings)?)),
-        _ => {
-            let exe = tools.llama()?;
-            let model = tools.llm_model()?;
-            Ok(Box::new(LlamaServer::start(exe, model, settings.llm_context, settings.llm_threads, work, cancel)?))
+/// Com placa de vídeo disponível, usa o llama.cpp Vulkan; se ele falhar, volta para o processador.
+pub fn start_backend(settings: &Settings, tools: &Tools, work: &Path, cancel: &Cancel) -> Result<Backend> {
+    if settings.llm_provider == LlmProvider::Ollama {
+        return Ok(Backend { chat: Box::new(Ollama::connect(settings)?), gpu: None, warning: None });
+    }
+    let model = tools.llm_model()?;
+    let mut warning = None;
+    if settings.llm_gpu && settings.llama_path.trim().is_empty() {
+        if let Some(gpu_exe) = tools.llama_gpu.as_deref() {
+            if let Some((id, device)) = best_gpu(&gpu_devices(gpu_exe)) {
+                let dev = ["--device".to_string(), id];
+                match LlamaServer::start_with(gpu_exe, model, settings.llm_context, settings.llm_threads, &dev, work, cancel) {
+                    Ok(server) => return Ok(Backend { chat: Box::new(server), gpu: Some(device), warning: None }),
+                    Err(e) if e.downcast_ref::<Cancelled>().is_some() => return Err(e),
+                    Err(e) => {
+                        let device = device.split(" (").next().unwrap_or(&device);
+                        warning = Some(format!(
+                            "A placa de vídeo ({device}) não conseguiu rodar a IA e o app usou o processador (mais lento). Detalhe: {}",
+                            format!("{e:#}").lines().next().unwrap_or_default()
+                        ))
+                    }
+                }
+            }
         }
     }
+    let exe = tools.llama()?;
+    let server = LlamaServer::start(exe, model, settings.llm_context, settings.llm_threads, work, cancel)?;
+    Ok(Backend { chat: Box::new(server), gpu: None, warning })
+}
+
+/// Placas de vídeo que o llama.cpp consegue usar (`--list-devices`), com nome e memória.
+/// O resultado fica guardado: a consulta leva cerca de um segundo.
+pub fn gpu_devices(exe: &Path) -> Vec<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<PathBuf, Vec<String>>>> = Mutex::new(None);
+    if let Some(v) = CACHE.lock().unwrap().get_or_insert_with(HashMap::new).get(exe) {
+        return v.clone();
+    }
+    let v = query_devices(exe);
+    CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(exe.to_path_buf(), v.clone());
+    v
+}
+
+fn query_devices(exe: &Path) -> Vec<String> {
+    let Ok(mut child) = command(exe).arg("--list-devices").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() else {
+        return Vec::new();
+    };
+    // Driver com defeito pode travar a consulta: espera no máximo 20 s.
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < Duration::from_secs(20) => std::thread::sleep(Duration::from_millis(100)),
+            _ => {
+                kill(&mut child);
+                return Vec::new();
+            }
+        }
+    }
+    let mut text = String::new();
+    use std::io::Read;
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut text);
+    }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut text);
+    }
+    parse_devices(&text)
+}
+
+/// Vídeo integrado (Intel HD/UHD, Radeon de APU) ou renderização por software: não compensa.
+fn is_integrated(name: &str) -> bool {
+    let n = name.to_lowercase();
+    ["hd graphics", "uhd graphics", "iris", "llvmpipe", "lavapipe", "basic render", "swiftshader", "radeon(tm) graphics", "radeon graphics"]
+        .iter()
+        .any(|k| n.contains(k))
+}
+
+/// MiB totais informados pelo llama.cpp: "Nome (8192 MiB, 7900 MiB free)".
+fn device_mib(name: &str) -> u64 {
+    name.rsplit_once(" (")
+        .and_then(|(_, r)| r.split(" MiB").next())
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// A placa dedicada com mais memória (ignora vídeo integrado): (id para `--device`, descrição).
+pub fn best_gpu(devices: &[String]) -> Option<(String, String)> {
+    devices
+        .iter()
+        .filter_map(|d| d.split_once(": ").map(|(id, desc)| (id.trim().to_string(), desc.trim().to_string())))
+        .filter(|(_, d)| !is_integrated(d))
+        .max_by_key(|(_, d)| device_mib(d))
+}
+
+/// Lê a saída de `llama-server --list-devices`, ex.:
+/// `  Vulkan0: AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)`.
+fn parse_devices(text: &str) -> Vec<String> {
+    text.lines()
+        .skip_while(|l| !l.contains("Available devices"))
+        .skip(1)
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && *l != "(none)")
+        .filter(|l| l.contains(": "))
+        .map(str::to_string)
+        .collect()
 }
 
 fn threads(n: usize) -> usize {
@@ -58,6 +164,11 @@ pub struct LlamaServer {
 
 impl LlamaServer {
     pub fn start(exe: &Path, model: &Path, ctx: u32, n_threads: usize, work: &Path, cancel: &Cancel) -> Result<Self> {
+        Self::start_with(exe, model, ctx, n_threads, &[], work, cancel)
+    }
+
+    /// Como [`start`](Self::start), com argumentos extras (ex.: `--device Vulkan0`).
+    pub fn start_with(exe: &Path, model: &Path, ctx: u32, n_threads: usize, extra: &[String], work: &Path, cancel: &Cancel) -> Result<Self> {
         std::fs::create_dir_all(work)?;
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let log = work.join("llama-server.log");
@@ -68,6 +179,7 @@ impl LlamaServer {
             .args(["-c", &ctx.max(2048).to_string(), "-t", &threads(n_threads).to_string()])
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "-np", "1", "--jinja"])
             .args(["--chat-template-kwargs", r#"{"enable_thinking":false}"#])
+            .args(extra)
             .stdin(Stdio::null())
             .stdout(log_file.try_clone()?)
             .stderr(log_file);
@@ -285,6 +397,60 @@ mod tests {
         assert!(v["title"].is_string(), "{v}");
         eprintln!("resposta: {v}");
         drop(server);
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn parses_device_list() {
+        let out = "ggml_vulkan: Found 1 Vulkan devices:\nAvailable devices:\n  Vulkan0: AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)\n";
+        assert_eq!(parse_devices(out), vec!["Vulkan0: AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)".to_string()]);
+        assert!(parse_devices("Available devices:\n  (none)\n").is_empty());
+        assert!(parse_devices("erro qualquer").is_empty());
+        let both = vec![
+            "Vulkan0: Intel(R) HD Graphics 630 (16288 MiB, 16000 MiB free)".to_string(),
+            "Vulkan1: AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)".to_string(),
+        ];
+        assert_eq!(
+            best_gpu(&both),
+            Some(("Vulkan1".to_string(), "AMD Radeon RX 570 Series (8192 MiB, 7900 MiB free)".to_string()))
+        );
+        assert_eq!(best_gpu(&both[..1]), None);
+    }
+
+    /// Placa de vídeo que falha ao carregar: a IA deve voltar para o processador, com aviso.
+    /// `BWSC_LLAMA_SERVER=... BWSC_TEST_GGUF=... cargo test gpu_failure_falls_back -- --ignored`
+    #[test]
+    #[ignore]
+    #[cfg(unix)]
+    fn gpu_failure_falls_back_to_cpu() {
+        use std::os::unix::fs::PermissionsExt;
+        let (Ok(exe), Ok(model)) = (std::env::var("BWSC_LLAMA_SERVER"), std::env::var("BWSC_TEST_GGUF")) else {
+            eprintln!("defina BWSC_LLAMA_SERVER e BWSC_TEST_GGUF");
+            return;
+        };
+        let work = std::env::temp_dir().join(format!("bwsc-gpu-{}", std::process::id()));
+        std::fs::create_dir_all(&work).unwrap();
+        // "llama-server" falso que diz ter uma placa, mas usa o real (que não acha a placa e fecha).
+        let fake = work.join("llama-server-gpu");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --list-devices ]; then printf 'Available devices:\\n  Vulkan0: Placa Falsa (8192 MiB, 8000 MiB free)\\n'; exit 0; fi\nexec {exe} \"$@\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let settings = Settings { llm_context: 2048, llm_threads: 2, ..Settings::default() };
+        let mut tools = Tools::locate(&settings);
+        tools.llama = Some(PathBuf::from(&exe));
+        tools.llama_gpu = Some(fake);
+        tools.llm_model = Some(PathBuf::from(&model));
+        let b = start_backend(&settings, &tools, &work, &Cancel::new()).unwrap();
+        assert!(b.gpu.is_none());
+        let w = b.warning.clone().expect("deve avisar que a placa falhou");
+        assert!(w.contains("Placa Falsa"), "{w}");
+        eprintln!("{w}");
+        drop(b);
         let _ = std::fs::remove_dir_all(&work);
     }
 }

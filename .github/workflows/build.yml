@@ -72,6 +72,7 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "prerelease=$($ver.Contains('-').ToString().ToLower())" >> $env:GITHUB_OUTPUT
           Write-Host "Versão $ver — publicar: $publish"
+          exit 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Verificar downloads do instalador (GitHub real)

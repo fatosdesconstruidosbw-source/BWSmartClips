@@ -5,6 +5,19 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+## [1.1.0] - 2026-11-27
+
+### Novidades
+- **Nova identidade visual:** logotipo novo no topo do app e ícone novo no instalador, na janela, na barra de tarefas e nos atalhos.
+- **Contas e downloads em um só lugar** (Configurações → Ferramentas e modelos): conecte **YouTube, Twitch e Kick**
+  numa janela de login do próprio app, veja o status de cada conta e desconecte quando quiser.
+- Quando uma plataforma pede login no meio do trabalho, aparece **"Entrar no YouTube/Twitch/Kick e tentar de novo"**,
+  e o corte recomeça sozinho depois do login.
+- **Prévia das legendas com vídeo real:** o estúdio de legendas agora mostra um podcast de verdade, em loop e sem áudio.
+
+### Melhorias
+- Arquivo cookies.txt e leitura de cookies do navegador foram para a seção "Avançado" e agora valem para qualquer plataforma.
+
 ## [1.0.0] - 2026-11-27
 
 Primeira versão do BWSmartClips: cortes virais de vídeos longos, estilo Opus Clip, rodando **100% offline**.

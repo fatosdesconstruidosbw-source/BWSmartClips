@@ -207,7 +207,7 @@ pub fn camera_path(samples: &[Option<f64>], frames: usize, fps: f64, src_w: u32,
             }
         }
         prev_target = target;
-        let x = (cam * src_w as f64 - crop_w as f64 / 2.0).clamp(0.0, max_x);
+        let x = crate::render::safe_clamp(cam * src_w as f64 - crop_w as f64 / 2.0, 0.0, max_x);
         out.push(x.round() as u32);
     }
     out

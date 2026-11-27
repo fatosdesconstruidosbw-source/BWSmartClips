@@ -16,6 +16,10 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   fontes do sistema na primeira vez.
 - Detecção da webcam e renderização têm limite de tempo: se algo travar, o app segue (ou mostra o erro) em vez de
   ficar parado; a detecção mostra o progresso em %.
+- **Layout Gameplay parava no meio** ("Procurando a webcam… 100%"): uma conta do recorte da webcam podia abortar o
+  trabalho por arredondamento. Corrigido, com teste de milhares de posições de webcam.
+- Qualquer erro interno inesperado agora aparece na tela (e no registro) em vez de deixar o app esperando para sempre;
+  no Gameplay, o corte com problema é refeito com "Preencher".
 - Registro do último trabalho (`logs\ultimo-trabalho.log`) com a hora de cada etapa, e botão "Abrir registro" quando dá erro.
 
 ## [1.1.0] - 2026-11-27

@@ -405,9 +405,24 @@ pub fn render_plans(
             output: &output,
         };
         let label = format!("Corte {}/{total}", i + 1);
-        render::render(&job, cancel, &mut |p, m| {
-            report(on_progress, Stage::Render, (i as f32 + p) / total as f32, format!("{label}: {m}"))
-        })?;
+        let mut progress = |p: f32, m: &str| report(on_progress, Stage::Render, (i as f32 + p) / total as f32, format!("{label}: {m}"));
+        // Um erro interno (panic) num corte não pode derrubar o trabalho em silêncio:
+        // vira erro normal e, no Gameplay, tentamos de novo com "Preencher".
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(&job, cancel, &mut progress)));
+        match first {
+            Ok(r) => r?,
+            Err(panic) => {
+                let msg = panic_message(&panic);
+                if job.reframe == crate::config::ReframeMode::Gameplay {
+                    progress(0.1, "Erro no layout Gameplay — refazendo com Preencher");
+                    let fallback = RenderJob { reframe: crate::config::ReframeMode::Center, ..job };
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::render(&fallback, cancel, &mut progress)))
+                        .map_err(|p| anyhow::anyhow!("erro interno ao renderizar o corte {}: {}", i + 1, panic_message(&p)))??;
+                } else {
+                    anyhow::bail!("erro interno ao renderizar o corte {}: {msg}", i + 1);
+                }
+            }
+        }
         let thumb = project_dir.join(format!("{name}.jpg"));
         let thumbnail = media::thumbnail(ffmpeg, &output, &thumb, plan.duration().min(2.0) / 2.0, cancel)
             .ok()
@@ -422,6 +437,14 @@ pub fn render_plans(
         });
     }
     Ok(clips)
+}
+
+/// Texto de um panic capturado.
+pub fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "erro desconhecido".into())
 }
 
 #[cfg(test)]

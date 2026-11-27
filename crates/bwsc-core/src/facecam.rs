@@ -36,9 +36,10 @@ pub struct NormRect {
 
 impl NormRect {
     pub fn clamp(self) -> Self {
-        let w = self.w.clamp(0.02, 1.0);
-        let h = self.h.clamp(0.02, 1.0);
-        Self { x: self.x.clamp(0.0, 1.0 - w), y: self.y.clamp(0.0, 1.0 - h), w, h }
+        let fin = |v: f64, d: f64| if v.is_finite() { v } else { d };
+        let w = fin(self.w, 0.3).clamp(0.02, 1.0);
+        let h = fin(self.h, 0.3).clamp(0.02, 1.0);
+        Self { x: fin(self.x, 0.0).clamp(0.0, 1.0 - w), y: fin(self.y, 0.0).clamp(0.0, 1.0 - h), w, h }
     }
 }
 
@@ -194,7 +195,7 @@ pub fn detect_facecam(frames: &Frames, faces_per_frame: &[Vec<Face>]) -> Option<
         let (i, s) = scores.into_iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
         (s >= 14.0 && s >= mean * 3.0).then_some(i)
     };
-    let lim = |v: f64, max: usize| v.clamp(1.0, (max - 2) as f64) as usize;
+    let lim = |v: f64, max: usize| crate::render::safe_clamp(v, 1.0, max.saturating_sub(2).max(1) as f64) as usize;
 
     let left_range: Vec<usize> = (lim(px - pw * 6.0, w)..lim(px - pw * 0.9, w)).collect();
     let right_range: Vec<usize> = (lim(px + pw * 0.9, w)..lim(px + pw * 6.0, w)).collect();

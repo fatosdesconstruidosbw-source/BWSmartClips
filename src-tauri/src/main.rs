@@ -332,7 +332,7 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
         let mut log = JobLog::new(&source_text, &options);
         let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let mut last_msg = String::new();
-        let result = run_job(&source, &options, &settings, &cancel, &mut |p: Progress| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(&source, &options, &settings, &cancel, &mut |p: Progress| {
             log.progress(&p);
             // Limita a frequência de eventos para não sobrecarregar a interface.
             let now = std::time::Instant::now();
@@ -341,7 +341,9 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
                 last_msg = p.message.clone();
                 let _ = app.emit("job://progress", JobProgress { id: job_id.clone(), progress: p });
             }
-        });
+        })))
+        // Nunca deixar a tela esperando para sempre: erro interno vira mensagem.
+        .unwrap_or_else(|p| Err(anyhow::anyhow!("erro interno: {}", bwsc_core::pipeline::panic_message(&p))));
         app.state::<AppState>().jobs.lock().unwrap().remove(&job_id);
         match &result {
             Ok(r) => log.line(&format!("CONCLUÍDO: {} cortes em {}", r.clips.len(), r.project_dir.display())),

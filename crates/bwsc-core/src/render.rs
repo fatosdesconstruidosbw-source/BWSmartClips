@@ -212,8 +212,21 @@ pub struct GameplayPlan {
     pub top_h: u32,
 }
 
+/// `clamp` que nunca aborta: com limites invertidos por arredondamento (ou NaN) usa o mínimo.
+/// (`f64::clamp` encerra o programa se `min > max`, e foi isso que "travava" o app.)
+pub fn safe_clamp(v: f64, lo: f64, hi: f64) -> f64 {
+    if !lo.is_finite() {
+        return 0.0;
+    }
+    if !hi.is_finite() || hi < lo || !v.is_finite() {
+        return lo;
+    }
+    v.max(lo).min(hi)
+}
+
 pub fn gameplay_plan(g: &Geometry, cam: &Facecam, ratio: f64) -> GameplayPlan {
     let (pw, ph, ow, oh) = (g.proc_w as f64, g.proc_h as f64, g.out_w as f64, g.out_h as f64);
+    let ratio = if ratio.is_finite() { ratio } else { 0.38 };
     let top_h = even(oh * ratio.clamp(0.25, 0.55));
     let bot_h = g.out_h - top_h;
 
@@ -222,11 +235,11 @@ pub fn gameplay_plan(g: &Geometry, cam: &Facecam, ratio: f64) -> GameplayPlan {
     let (bx, by, bw, bh) = (r.x * pw, r.y * ph, (r.w * pw).max(4.0), (r.h * ph).max(4.0));
     let target = ow / top_h as f64;
     let (cw, ch) = if bw / bh > target { (bh * target, bh) } else { (bw, bw / target) };
-    let cx = (cam.face_x * pw - cw / 2.0).clamp(bx, bx + bw - cw);
-    let cy = (cam.face_y * ph - ch * 0.45).clamp(by, by + bh - ch);
-    let (cw, ch) = (even(cw).min(g.proc_w), even(ch).min(g.proc_h));
-    let cx = (cx.round() as u32).min(g.proc_w - cw);
-    let cy = (cy.round() as u32).min(g.proc_h - ch);
+    let cx = safe_clamp(cam.face_x * pw - cw / 2.0, bx, bx + bw - cw);
+    let cy = safe_clamp(cam.face_y * ph - ch * 0.45, by, by + bh - ch);
+    let (cw, ch) = (even(cw).min(g.proc_w).max(2), even(ch).min(g.proc_h).max(2));
+    let cx = (cx.max(0.0).round() as u32).min(g.proc_w.saturating_sub(cw));
+    let cy = (cy.max(0.0).round() as u32).min(g.proc_h.saturating_sub(ch));
 
     // Jogo: recorte central na proporção do espaço de baixo.
     let target = ow / bot_h as f64;
@@ -470,5 +483,44 @@ mod tests {
         let mut out = vec![0u8; 2 * 2 * 3];
         crop_rgb(&frame, 4, 2, 1, 2, &mut out);
         assert_eq!(out, vec![1, 1, 1, 2, 2, 2, 1, 1, 1, 2, 2, 2]);
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::facecam::NormRect;
+
+    /// Milhares de caixas de webcam aleatórias: o cálculo nunca pode abortar
+    /// e o recorte tem que caber no quadro.
+    #[test]
+    fn gameplay_plan_never_panics() {
+        let mut seed = 7u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % 10_000) as f64 / 10_000.0
+        };
+        for &(w, h) in &[(1920u32, 1080u32), (1280, 720), (2560, 1440), (1080, 1920), (1366, 768)] {
+            let info = MediaInfo { duration: 60.0, width: w, height: h, fps: 30.0, has_audio: true };
+            let g = geometry(&info, ReframeMode::Gameplay, 1920);
+            for _ in 0..5000 {
+                let rect = NormRect { x: rnd(), y: rnd(), w: rnd() * 0.6, h: rnd() * 0.6 }.clamp();
+                let cam = Facecam { rect, face_x: rnd(), face_y: rnd(), framed: true };
+                let ratio = 0.25 + rnd() * 0.3;
+                let p = gameplay_plan(&g, &cam, ratio);
+                let (cw, ch, cx, cy) = p.cam;
+                assert!(cw >= 2 && ch >= 2 && cx + cw <= g.proc_w && cy + ch <= g.proc_h, "{p:?} {rect:?}");
+                let (gw, gh, gx, gy) = p.game;
+                assert!(gx + gw <= g.proc_w && gy + gh <= g.proc_h);
+            }
+            // Caso exato: caixa com a mesma proporção do espaço de cima.
+            let top = (1920.0 * 0.38f64).round();
+            let bh = 0.25;
+            let bw = bh * g.proc_h as f64 * (1080.0 / top) / g.proc_w as f64;
+            let cam = Facecam { rect: NormRect { x: 0.7, y: 0.1, w: bw, h: bh }, face_x: 0.8, face_y: 0.2, framed: true };
+            gameplay_plan(&g, &cam, 0.38);
+        }
     }
 }

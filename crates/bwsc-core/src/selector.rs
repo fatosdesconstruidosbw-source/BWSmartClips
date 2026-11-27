@@ -158,7 +158,7 @@ pub fn heuristic_candidates(t: &Transcript, levels: Option<&[f32]>, opts: &ClipO
 
     let min = opts.min_duration.max(1.0);
     let max = opts.max_duration.max(min + 1.0);
-    let target = 35.0f64.clamp(min, max);
+    let target = crate::render::safe_clamp(35.0, min, max);
 
     let mut best_per_start: Vec<Window> = Vec::new();
     for si in 0..segs.len() {

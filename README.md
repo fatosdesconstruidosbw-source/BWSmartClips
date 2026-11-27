@@ -13,7 +13,8 @@ e que funciona **100% offline por padrão**, com IA local. APIs online (Claude/O
 
 ## Como usar (Windows)
 
-1. Baixe o instalador na aba **Actions** (artefato `BWSmartClips-windows`) ou em **Releases**, e instale.
+1. Baixe o instalador na aba **Actions** (artefato `BWSmartClips-instalador-windows`) ou em **Releases**,
+   execute o `BWSmartClips_..._x64-setup.exe` e abra o **BWSmartClips** pelo menu Iniciar.
 2. Na primeira abertura, o **assistente** baixa tudo de uma vez para `%LOCALAPPDATA%\BWSmartClips`
    (ffmpeg, yt-dlp, Deno, whisper.cpp, llama.cpp, modelo Whisper, detector de voz e modelo de IA — cerca de 4 GB
    com as opções recomendadas). Depois disso, nada precisa de internet (só links do YouTube, claro).

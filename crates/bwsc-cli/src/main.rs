@@ -83,6 +83,18 @@ enum Cmd {
 }
 
 fn main() {
+    // Aberto com dois cliques (sem argumentos): explica em vez de fechar na hora.
+    if std::env::args().len() == 1 {
+        println!("Este é o BWSmartClips de LINHA DE COMANDO (para usar no terminal).\n");
+        println!("Para usar o aplicativo com janela, instale o \"BWSmartClips_..._x64-setup.exe\"");
+        println!("e abra o \"BWSmartClips\" pelo menu Iniciar.\n");
+        println!("Uso no terminal:  bwsmartclips --help");
+        if cfg!(windows) {
+            println!("\nPressione Enter para fechar...");
+            let _ = std::io::stdin().read_line(&mut String::new());
+        }
+        return;
+    }
     if let Err(e) = real_main() {
         eprintln!("\nerro: {e:#}");
         std::process::exit(1);

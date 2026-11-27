@@ -413,7 +413,7 @@ $("btn-clear-cache").onclick = async () => {
 
 function openSettings(tab) {
   fillSettings();
-  refreshYtStatus();
+  refreshAccounts();
   refreshTools();
   $("settings-modal").classList.remove("hidden");
   if (tab) selectTab(tab);
@@ -525,10 +525,16 @@ listen("job://error", (d) => {
     $("progress-title").textContent = "Cancelado";
     $("progress-msg").textContent = "";
   } else {
-    $("progress-title").textContent = d.kind === "youtube_login" ? "O YouTube pediu login" : "Algo deu errado";
+    const needsLogin = (d.kind || "").startsWith("login:");
+    const NAMES = { youtube: "YouTube", twitch: "Twitch", kick: "Kick" };
+    if (needsLogin) {
+      loginPlatform = d.kind.slice(6);
+      $("btn-yt-login-retry").textContent = `Entrar no ${NAMES[loginPlatform] || loginPlatform} e tentar de novo`;
+    }
+    $("progress-title").textContent = needsLogin ? `O ${NAMES[loginPlatform] || "site"} pediu login` : "Algo deu errado";
     $("progress-error").textContent = d.message;
     $("progress-error").classList.remove("hidden");
-    $("yt-login-actions").classList.toggle("hidden", d.kind !== "youtube_login");
+    $("yt-login-actions").classList.toggle("hidden", !needsLogin);
   }
   currentJob = null;
 });
@@ -616,40 +622,52 @@ $("btn-projects").onclick = async () => {
   $("projects-modal").classList.remove("hidden");
 };
 
-// ------------------------------------------------------------- login do YouTube
+// ------------------------------------------------------------- contas (YouTube, Twitch, Kick)
 
-let retryAfterLogin = false;
+let retryAfterLogin = null;
+const ACC_ICON = { youtube: "▶", twitch: "T", kick: "K" };
 
-async function refreshYtStatus() {
-  const st = await invoke("youtube_status");
-  $("yt-status-text").innerHTML = st.connected ? `<span class="on">● Conectado ao YouTube</span>` : "Não conectado (só necessário se o YouTube bloquear)";
-  $("btn-yt-login").textContent = st.connected ? "Entrar de novo" : "Entrar no YouTube";
-  $("btn-yt-logout").classList.toggle("hidden", !st.connected);
+async function refreshAccounts() {
+  const list = await invoke("account_status");
+  $("accounts-list").innerHTML = list.map((a) => `
+    <div class="account">
+      <div class="acc-logo ${a.id}">${ACC_ICON[a.id] || "•"}</div>
+      <div class="acc-info"><b>${a.name}</b>
+        <span class="${a.connected ? "on" : ""}">${a.connected ? "● Conectado" : "Não conectado"}</span></div>
+      <button class="${a.connected ? "secondary" : "primary"}" data-login="${a.id}">${a.connected ? "Entrar de novo" : "Entrar"}</button>
+      ${a.connected ? `<button class="ghost danger" data-logout="${a.id}">Desconectar</button>` : ""}
+    </div>`).join("");
 }
 
-async function openYoutubeLogin(retry) {
-  retryAfterLogin = retry;
+async function openLogin(platform, retry) {
+  retryAfterLogin = retry ? platform : null;
   try {
-    await invoke("youtube_login");
+    await invoke("account_login", { platform });
     toast("Faça login na janela que abriu. Ela fecha sozinha ao terminar.", 5000);
   } catch (e) {
     toast(String(e), 5000);
   }
 }
 
-$("btn-yt-login").onclick = () => openYoutubeLogin(false);
-$("btn-yt-login-retry").onclick = () => openYoutubeLogin(true);
-$("btn-yt-logout").onclick = async () => {
-  await invoke("youtube_logout");
-  toast("Desconectado do YouTube");
-  refreshYtStatus();
-};
+$("accounts-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.login) openLogin(b.dataset.login, false);
+  if (b.dataset.logout) {
+    await invoke("account_logout", { platform: b.dataset.logout });
+    toast("Conta desconectada");
+    refreshAccounts();
+  }
+});
 
-listen("youtube://login", async (ev) => {
+let loginPlatform = "youtube";
+$("btn-yt-login-retry").onclick = () => openLogin(loginPlatform, true);
+
+listen("account://login", async (ev) => {
   toast(ev.message, 4000);
-  await refreshYtStatus();
-  if (ev.ok && retryAfterLogin) {
-    retryAfterLogin = false;
+  await refreshAccounts();
+  if (ev.ok && retryAfterLogin === ev.platform) {
+    retryAfterLogin = null;
     $("btn-start").click();
   }
 });
@@ -670,7 +688,7 @@ const TOUR = [
   { el: "#btn-projects", title: "Seus cortes",
     text: "Os cortes aparecem na tela com a <b>nota de viralidade</b>, título, motivo e hashtags. Em <b>Projetos</b> você reabre trabalhos anteriores; os arquivos ficam em <b>Vídeos\\BWSmartClips</b>." },
   { el: "#btn-settings", title: "Configurações",
-    text: "Aqui você troca os modelos de IA e de transcrição, conecta o <b>YouTube</b> se ele pedir login e, se quiser, ativa as APIs online (Claude/OpenAI). Tudo é opcional." },
+    text: "Aqui você troca os modelos de IA e de transcrição, conecta suas contas do <b>YouTube</b>, <b>Twitch</b> ou <b>Kick</b> se a plataforma pedir login e, se quiser, ativa as APIs online (Claude/OpenAI). Tudo é opcional." },
   { el: "#mode-pill", title: "Pronto!",
     text: "Este selo mostra se o app está trabalhando <b>100% offline</b>. Você pode rever este guia quando quiser em <b>Como funciona</b>." },
 ];

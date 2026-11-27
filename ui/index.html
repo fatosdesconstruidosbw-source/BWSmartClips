@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BWSmartClips</title>
+  <link rel="icon" href="icone.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="bg-glow"></div>
   <header class="topbar">
     <div class="brand">
-      <div class="logo"><span></span></div>
-      <b>BWSmartClips</b>
+      <img class="brand-logo" src="logotipo.png" alt="BWSmartClips" />
     </div>
     <nav class="top-actions">
       <button class="nav-link how" id="btn-tour">
@@ -166,7 +166,7 @@
       <p class="muted" id="progress-msg"></p>
       <pre class="error hidden" id="progress-error"></pre>
       <div class="actions hidden" id="yt-login-actions">
-        <button class="primary" id="btn-yt-login-retry">Entrar no YouTube e tentar de novo</button>
+        <button class="primary" id="btn-yt-login-retry">Entrar e tentar de novo</button>
         <span class="muted small">Abre uma janela do próprio app. Você faz login uma vez só.</span>
       </div>
     </section>
@@ -298,28 +298,26 @@
           <div class="bar small hidden" id="install-bar"><div id="install-fill"></div></div>
           <p class="muted small" id="install-msg"></p>
         </fieldset>
-        <fieldset>
-          <legend>YouTube</legend>
-          <p class="muted small" style="margin:4px 0 0">O app tenta baixar <b>sem login</b> primeiro. Se o YouTube pedir para
-            "confirmar que você não é um robô", basta entrar na sua conta uma vez por aqui.</p>
-          <div class="yt-status">
-            <span id="yt-status-text" class="muted">Não conectado</span>
-            <button class="primary" id="btn-yt-login">Entrar no YouTube</button>
-            <button class="ghost danger hidden" id="btn-yt-logout">Desconectar</button>
-          </div>
-          <p class="muted small" style="margin-top:14px">Alternativas avançadas:</p>
-          <div class="path-row"><label>Cookies do YouTube (cookies.txt) <input id="s-cookies" type="text" placeholder="exportado com a extensão &quot;Get cookies.txt LOCALLY&quot;" /></label><button class="secondary" data-pick="s-cookies" data-title="Escolha o arquivo cookies.txt">…</button></div>
-          <label class="block">Ou ler cookies do navegador
-            <select id="s-cookies-browser">
-              <option value="">Automático (tenta Firefox, Edge, Chrome…)</option>
-              <option value="firefox">Firefox (recomendado)</option>
-              <option value="edge">Microsoft Edge</option>
-              <option value="chrome">Google Chrome</option>
-              <option value="brave">Brave</option>
-              <option value="opera">Opera</option>
-            </select>
-          </label>
-          <p class="muted small">No Windows, Chrome e Edge costumam bloquear a leitura dos cookies; nesse caso use o Firefox ou o arquivo cookies.txt.</p>
+        <fieldset class="accounts">
+          <legend>Contas e downloads</legend>
+          <p class="muted small" style="margin:4px 0 2px">O app sempre tenta baixar <b>sem login</b> primeiro. Conecte uma conta só se a
+            plataforma bloquear (YouTube pedindo "não sou um robô", VODs só para inscritos etc.). A janela de login é do próprio app.</p>
+          <div id="accounts-list"></div>
+          <details class="advanced">
+            <summary>Avançado: cookies de um navegador ou arquivo cookies.txt</summary>
+            <div class="path-row"><label>Arquivo cookies.txt (qualquer plataforma) <input id="s-cookies" type="text" placeholder="exportado com a extensão &quot;Get cookies.txt LOCALLY&quot;" /></label><button class="secondary" data-pick="s-cookies" data-title="Escolha o arquivo cookies.txt">…</button></div>
+            <label class="block">Ou ler cookies do navegador
+              <select id="s-cookies-browser">
+                <option value="">Automático (tenta Firefox, Edge, Chrome…)</option>
+                <option value="firefox">Firefox (recomendado)</option>
+                <option value="edge">Microsoft Edge</option>
+                <option value="chrome">Google Chrome</option>
+                <option value="brave">Brave</option>
+                <option value="opera">Opera</option>
+              </select>
+            </label>
+            <p class="muted small">No Windows, Chrome e Edge costumam bloquear a leitura dos cookies; prefira a conta conectada acima, o Firefox ou o cookies.txt.</p>
+          </details>
         </fieldset>
         <fieldset>
           <legend>Caminhos manuais <span class="muted">(deixe vazio para detectar)</span></legend>
@@ -373,7 +371,7 @@
   <div class="modal hidden" id="setup-modal">
     <div class="modal-box">
       <div class="modal-head">
-        <h2>Bem-vindo ao BWSmartClips 👋</h2>
+        <h2 class="welcome"><img src="icone.png" alt="" /> Bem-vindo ao BWSmartClips</h2>
       </div>
       <div class="tab-body">
         <p>O BWSmartClips funciona <b>100% offline</b>: transcrição, IA que escolhe os cortes, legendas e

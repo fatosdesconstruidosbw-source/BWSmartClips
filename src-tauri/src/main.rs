@@ -1,7 +1,7 @@
 // Esconde o console no Windows em modo release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod youtube_login;
+mod accounts;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -157,22 +157,23 @@ async fn import_models(app: AppHandle) -> CmdResult<bool> {
     Ok(true)
 }
 
-// ----------------------------------------------------------------- YouTube
+// ----------------------------------------------------------------- contas (YouTube, Twitch, Kick)
 
 /// Precisa ser `async`: no Windows, criar webviews em comando síncrono trava.
 #[tauri::command]
-async fn youtube_login(app: AppHandle) -> CmdResult<()> {
-    youtube_login::open(&app).map_err(err)
+async fn account_login(app: AppHandle, platform: String) -> CmdResult<()> {
+    let p = accounts::find(&platform).ok_or("plataforma desconhecida")?;
+    accounts::open(&app, p).map_err(err)
 }
 
 #[tauri::command]
-fn youtube_status() -> youtube_login::LoginStatus {
-    youtube_login::status()
+fn account_status() -> Vec<accounts::AccountStatus> {
+    accounts::status()
 }
 
 #[tauri::command]
-fn youtube_logout() -> CmdResult<()> {
-    youtube_login::logout().map_err(err)
+fn account_logout(platform: String) -> CmdResult<()> {
+    accounts::logout(&platform).map_err(err)
 }
 
 #[tauri::command]
@@ -255,7 +256,7 @@ struct JobError {
     id: String,
     message: String,
     cancelled: bool,
-    /// "youtube_login" quando o YouTube exige login (a interface mostra o botão "Entrar no YouTube").
+    /// "login:<plataforma>" quando a plataforma exige login (a interface mostra o botão "Entrar no …").
     kind: String,
 }
 
@@ -294,11 +295,11 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
                         id: job_id,
                         message: format!("{e:#}"),
                         cancelled: is_cancelled_error(&e),
-                        kind: if e.chain().any(|c| c.downcast_ref::<bwsc_core::download::YoutubeLoginRequired>().is_some()) {
-                            "youtube_login".into()
-                        } else {
-                            String::new()
-                        },
+                        kind: e
+                            .chain()
+                            .find_map(|c| c.downcast_ref::<bwsc_core::download::LoginRequired>())
+                            .map(|l| format!("login:{}", l.platform))
+                            .unwrap_or_default(),
                     },
                 );
             }
@@ -350,9 +351,9 @@ fn main() {
             estimate_install,
             import_models,
             clear_cache,
-            youtube_login,
-            youtube_status,
-            youtube_logout,
+            account_login,
+            account_status,
+            account_logout,
             cancel_install,
             pick_video,
             pick_folder,

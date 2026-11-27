@@ -165,7 +165,7 @@ pub struct Settings {
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub ytdlp_path: String,
-    /// Arquivo cookies.txt exportado do navegador (para o YouTube não bloquear).
+    /// Arquivo cookies.txt exportado do navegador (avançado; vale para qualquer plataforma).
     pub youtube_cookies_file: String,
     /// Navegador de onde o yt-dlp lê os cookies: "", "firefox", "edge", "chrome", "brave"…
     pub cookies_browser: String,
@@ -276,9 +276,9 @@ pub fn models_dir() -> PathBuf {
     app_data_dir().join("models")
 }
 
-/// Cookies do YouTube salvos pelo login feito dentro do app.
-pub fn youtube_cookies_path() -> PathBuf {
-    app_data_dir().join("youtube-cookies.txt")
+/// Cookies salvos pelo login feito dentro do app (`youtube`, `twitch` ou `kick`).
+pub fn login_cookies_path(platform: &str) -> PathBuf {
+    app_data_dir().join(format!("{platform}-cookies.txt"))
 }
 
 /// Cache de transcrições, análises e downloads.

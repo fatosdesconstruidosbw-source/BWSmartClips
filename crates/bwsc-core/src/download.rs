@@ -46,23 +46,54 @@ impl Auth {
     }
 }
 
-/// O YouTube exigiu login e nada do que foi tentado funcionou.
+/// A plataforma exigiu login e nada do que foi tentado funcionou.
 #[derive(Debug)]
-pub struct YoutubeLoginRequired(pub String);
+pub struct LoginRequired {
+    /// `youtube`, `twitch` ou `kick`.
+    pub platform: &'static str,
+    pub detail: String,
+}
 
-impl std::fmt::Display for YoutubeLoginRequired {
+impl std::fmt::Display for LoginRequired {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = platform_name(self.platform);
+        let why = if self.platform == "youtube" {
+            "O YouTube pediu para confirmar que você não é um robô."
+        } else {
+            "Este vídeo exige estar logado (por exemplo, VOD só para inscritos)."
+        };
         write!(
             f,
-            "O YouTube pediu para confirmar que você não é um robô.\n\n\
-             Clique em \"Entrar no YouTube\": uma janela do próprio app abre, você faz login uma vez \
-             e o BWSmartClips passa a baixar normalmente.\n\n\
-             Detalhe técnico: {}",
-            self.0
+            "{why}\n\nClique em \"Entrar no {name}\": uma janela do próprio app abre, você faz login uma vez \
+             e o BWSmartClips passa a baixar normalmente.\n\nDetalhe técnico: {}",
+            self.detail
         )
     }
 }
-impl std::error::Error for YoutubeLoginRequired {}
+impl std::error::Error for LoginRequired {}
+
+pub fn platform_name(id: &str) -> &'static str {
+    match id {
+        "youtube" => "YouTube",
+        "twitch" => "Twitch",
+        "kick" => "Kick",
+        _ => "site",
+    }
+}
+
+/// Identificador da plataforma do link (`youtube`, `twitch`, `kick` ou vazio).
+pub fn platform_id(url: &str) -> &'static str {
+    let u = url.to_lowercase();
+    if u.contains("youtube.com") || u.contains("youtu.be") {
+        "youtube"
+    } else if u.contains("twitch.tv") {
+        "twitch"
+    } else if u.contains("kick.com") {
+        "kick"
+    } else {
+        ""
+    }
+}
 
 /// O link é de uma transmissão ao vivo (não dá para cortar algo que ainda não terminou).
 #[derive(Debug)]
@@ -77,18 +108,9 @@ impl std::fmt::Display for LiveStream {
 }
 impl std::error::Error for LiveStream {}
 
-/// Plataforma do link, para mensagens.
+/// Nome da plataforma do link, para mensagens.
 pub fn platform(url: &str) -> &'static str {
-    let u = url.to_lowercase();
-    if u.contains("youtube.com") || u.contains("youtu.be") {
-        "YouTube"
-    } else if u.contains("twitch.tv") {
-        "Twitch"
-    } else if u.contains("kick.com") {
-        "Kick"
-    } else {
-        "site"
-    }
+    platform_name(platform_id(url))
 }
 
 /// Navegadores tentados automaticamente quando o YouTube pede login.
@@ -158,14 +180,10 @@ pub fn download(
         .find(|l| l.contains("ERROR"))
         .unwrap_or(last.lines().last().unwrap_or_default())
         .to_string();
-    if platform(url) == "YouTube" {
-        bail!(YoutubeLoginRequired(detail))
+    match platform_id(url) {
+        "" => bail!("o site pediu login para este vídeo.\n\nDetalhe técnico: {detail}"),
+        id => bail!(LoginRequired { platform: id, detail }),
     }
-    bail!(
-        "O {} pediu login para este vídeo (pode ser exclusivo para inscritos). Entre na sua conta no Firefox ou \
-         informe um cookies.txt em Configurações → Ferramentas e modelos.\n\nDetalhe técnico: {detail}",
-        platform(url)
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

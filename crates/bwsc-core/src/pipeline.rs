@@ -164,7 +164,10 @@ pub fn run_job(
                 let cookies = settings.youtube_cookies_file.trim();
                 let cookies_file = Some(PathBuf::from(cookies))
                     .filter(|p| !cookies.is_empty() && p.is_file())
-                    .or_else(|| Some(crate::config::youtube_cookies_path()).filter(|p| p.is_file()));
+                    .or_else(|| {
+                        let id = download::platform_id(url);
+                        Some(crate::config::login_cookies_path(id)).filter(|p| !id.is_empty() && p.is_file())
+                    });
                 let auth = download::Auth {
                     cookies_file,
                     browser: Some(settings.cookies_browser.trim().to_string()).filter(|b| !b.is_empty()),

@@ -11,6 +11,13 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   e as bordas da moldura), e dá para conferir ou marcar a posição à mão num quadro do vídeo.
 - Tamanho da webcam ajustável (25% a 55% da altura). Se um corte não tiver webcam, ele usa "Preencher".
 
+### Correções
+- Renderização podia parecer travada no Windows: o ffmpeg agora usa só a fonte das legendas, sem indexar todas as
+  fontes do sistema na primeira vez.
+- Detecção da webcam e renderização têm limite de tempo: se algo travar, o app segue (ou mostra o erro) em vez de
+  ficar parado; a detecção mostra o progresso em %.
+- Registro do último trabalho (`logs\ultimo-trabalho.log`) com a hora de cada etapa, e botão "Abrir registro" quando dá erro.
+
 ## [1.1.0] - 2026-11-27
 
 ### Novidades

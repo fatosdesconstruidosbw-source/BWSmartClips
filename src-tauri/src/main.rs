@@ -223,7 +223,7 @@ async fn facecam_preview(state: State<'_, AppState>, source: String) -> CmdResul
             .arg(&image);
         bwsc_core::process::run(cmd, &cancel).map_err(err)?;
         let (start, dur) = (info.duration * 0.1, (info.duration * 0.8).max(1.0));
-        let detected = bwsc_core::facecam::detect_in_video(&ffmpeg, &video, info.width, info.height, start, dur, &cancel)
+        let detected = bwsc_core::facecam::detect_in_video(&ffmpeg, &video, info.width, info.height, start, dur, &cancel, &mut |_| {})
             .map_err(err)?
             .map(|c| c.rect);
         Ok(FacecamPreview { image: image.to_string_lossy().into_owned(), width: info.width, height: info.height, detected })
@@ -325,12 +325,15 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
     let cancel = Cancel::new();
     state.jobs.lock().unwrap().insert(id.clone(), cancel.clone());
     let settings = state.settings.lock().unwrap().clone();
+    let source_text = source.clone();
     let source = Source::parse(&source);
     let job_id = id.clone();
     std::thread::spawn(move || {
+        let mut log = JobLog::new(&source_text, &options);
         let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let mut last_msg = String::new();
         let result = run_job(&source, &options, &settings, &cancel, &mut |p: Progress| {
+            log.progress(&p);
             // Limita a frequência de eventos para não sobrecarregar a interface.
             let now = std::time::Instant::now();
             if p.message != last_msg || now.duration_since(last_emit).as_millis() > 150 {
@@ -340,6 +343,10 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
             }
         });
         app.state::<AppState>().jobs.lock().unwrap().remove(&job_id);
+        match &result {
+            Ok(r) => log.line(&format!("CONCLUÍDO: {} cortes em {}", r.clips.len(), r.project_dir.display())),
+            Err(e) => log.line(&format!("ERRO: {e:#}")),
+        }
         match result {
             Ok(result) => {
                 let _ = app.emit("job://done", JobDone { id: job_id, result });
@@ -362,6 +369,61 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
         }
     });
     Ok(id)
+}
+
+/// Registro do último trabalho (`%LOCALAPPDATA%\\BWSmartClips\\logs\\ultimo-trabalho.log`),
+/// com a hora de cada etapa — ajuda a descobrir onde algo travou.
+struct JobLog {
+    file: Option<std::fs::File>,
+    started: std::time::Instant,
+    last: String,
+}
+
+impl JobLog {
+    fn path() -> PathBuf {
+        bwsc_core::config::app_data_dir().join("logs").join("ultimo-trabalho.log")
+    }
+
+    fn new(source: &str, opts: &ClipOptions) -> Self {
+        let path = Self::path();
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        let mut log = Self { file: std::fs::File::create(&path).ok(), started: std::time::Instant::now(), last: String::new() };
+        log.line(&format!("BWSmartClips {} — {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS));
+        log.line(&format!("Fonte: {source}"));
+        log.line(&format!(
+            "Opções: {} cortes, {}–{} s, formato {:?}, webcam {:.0}%{}",
+            opts.clip_count,
+            opts.min_duration,
+            opts.max_duration,
+            opts.reframe,
+            opts.cam_ratio * 100.0,
+            if opts.facecam.is_some() { " (marcada à mão)" } else { "" }
+        ));
+        log
+    }
+
+    fn line(&mut self, text: &str) {
+        use std::io::Write;
+        if let Some(f) = self.file.as_mut() {
+            let t = self.started.elapsed().as_secs_f64();
+            let _ = writeln!(f, "[{:>4}:{:05.2}] {text}", (t / 60.0) as u64, t % 60.0);
+            let _ = f.flush();
+        }
+    }
+
+    /// Registra só quando a mensagem muda (sem as porcentagens).
+    fn progress(&mut self, p: &Progress) {
+        let key: String = p.message.chars().filter(|c| !c.is_ascii_digit() && *c != '%').collect();
+        if key != self.last {
+            self.last = key;
+            self.line(&format!("{:>3.0}% {:?}: {}", p.overall * 100.0, p.stage, p.message));
+        }
+    }
+}
+
+#[tauri::command]
+fn log_path() -> String {
+    JobLog::path().to_string_lossy().into_owned()
 }
 
 #[tauri::command]
@@ -419,6 +481,7 @@ fn main() {
             open_file,
             start_job,
             cancel_job,
+            log_path,
             list_projects
         ])
         .run(tauri::generate_context!())

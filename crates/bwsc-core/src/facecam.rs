@@ -60,7 +60,11 @@ pub struct Frames {
     pub data: Vec<Vec<u8>>,
 }
 
+/// Tempo máximo da detecção inteira; depois disso usamos o que já foi analisado.
+const DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Lê `SAMPLES` quadros espalhados em `[start, start+duration)`.
+#[allow(clippy::too_many_arguments)]
 pub fn sample_frames(
     ffmpeg: &Path,
     input: &Path,
@@ -69,6 +73,7 @@ pub fn sample_frames(
     start: f64,
     duration: f64,
     cancel: &Cancel,
+    on_frame: &mut dyn FnMut(usize),
 ) -> Result<Frames> {
     let w = ANALYSIS_WIDTH.min(src_w) & !1;
     let h = ((src_h as f64 * w as f64 / src_w as f64).round() as u32).max(2) & !1;
@@ -76,7 +81,7 @@ pub fn sample_frames(
     let mut cmd = command(ffmpeg);
     cmd.args(["-v", "error", "-ss", &format!("{start:.3}"), "-t", &format!("{duration:.3}"), "-i"])
         .arg(input)
-        .args(["-an", "-vf", &format!("fps={fps:.5},scale={w}:{h},format=gray"), "-frames:v", &SAMPLES.to_string()])
+        .args(["-an", "-sn", "-vf", &format!("fps={fps:.5},scale={w}:{h},format=gray"), "-frames:v", &SAMPLES.to_string()])
         .args(["-f", "rawvideo", "-pix_fmt", "gray", "-"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -85,16 +90,33 @@ pub fn sample_frames(
     let err = drain_stderr(&mut child);
     let mut out = child.stdout.take().unwrap();
     let len = (w * h) as usize;
+    // Leitura numa thread, para podermos desistir se o ffmpeg travar.
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || loop {
+        let mut buf = vec![0u8; len];
+        if out.read_exact(&mut buf).is_err() || tx.send(buf).is_err() {
+            break;
+        }
+    });
+    let started = std::time::Instant::now();
     let mut data = Vec::new();
     loop {
         if cancel.is_cancelled() {
             kill(&mut child);
             anyhow::bail!(Cancelled);
         }
-        let mut buf = vec![0u8; len];
-        match out.read_exact(&mut buf) {
-            Ok(()) => data.push(buf),
-            Err(_) => break,
+        match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+            Ok(f) => {
+                data.push(f);
+                on_frame(data.len());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if started.elapsed() > DEADLINE / 2 {
+                    kill(&mut child);
+                    break;
+                }
+            }
         }
     }
     let _ = child.wait();
@@ -104,7 +126,7 @@ pub fn sample_frames(
     Ok(Frames { w: w as usize, h: h as usize, data })
 }
 
-/// Detecta a webcam num trecho do vídeo.
+/// Detecta a webcam num trecho do vídeo. `on_progress` recebe 0.0–1.0.
 #[allow(clippy::too_many_arguments)]
 pub fn detect_in_video(
     ffmpeg: &Path,
@@ -114,16 +136,28 @@ pub fn detect_in_video(
     start: f64,
     duration: f64,
     cancel: &Cancel,
+    on_progress: &mut dyn FnMut(f32),
 ) -> Result<Option<Facecam>> {
-    let frames = sample_frames(ffmpeg, input, src_w, src_h, start, duration, cancel)?;
+    let started = std::time::Instant::now();
+    let frames = sample_frames(ffmpeg, input, src_w, src_h, start, duration, cancel, &mut |n| {
+        on_progress(0.3 * n as f32 / SAMPLES as f32)
+    })?;
     let mut det = new_detector()?;
     det.set_min_face_size(20);
     let mut faces = Vec::with_capacity(frames.data.len());
-    for f in &frames.data {
+    for (i, f) in frames.data.iter().enumerate() {
         cancel.check()?;
+        // Garante que a detecção nunca prende o trabalho: usa o que já analisou.
+        if started.elapsed() > DEADLINE && faces.len() >= 6 {
+            break;
+        }
         faces.push(detect(det.as_mut(), f, frames.w as u32, frames.h as u32));
+        on_progress(0.3 + 0.6 * (i + 1) as f32 / frames.data.len() as f32);
     }
-    Ok(detect_facecam(&frames, &faces))
+    let analysed = Frames { w: frames.w, h: frames.h, data: frames.data[..faces.len()].to_vec() };
+    let cam = detect_facecam(&analysed, &faces);
+    on_progress(1.0);
+    Ok(cam)
 }
 
 /// Núcleo da detecção (separado para testes).

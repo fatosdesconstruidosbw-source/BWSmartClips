@@ -129,9 +129,29 @@ pub struct RunOutput {
 
 /// Executa o comando, chamando `on_line` para cada linha de stdout/stderr.
 /// Mata o processo se `cancel` for acionado. Falha se o código de saída não for 0.
-pub fn run_lines(
+pub fn run_lines(cmd: Command, cancel: &Cancel, on_line: impl FnMut(Stream, &str)) -> Result<RunOutput> {
+    run_lines_watchdog(cmd, cancel, None, on_line)
+}
+
+/// O processo ficou tempo demais sem mostrar nenhum sinal de vida.
+#[derive(Debug)]
+pub struct Stalled {
+    pub program: String,
+    pub secs: u64,
+    pub tail: String,
+}
+impl std::fmt::Display for Stalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ficou {} s sem avançar e foi interrompido.\n{}", short_name(&self.program), self.secs, self.tail)
+    }
+}
+impl std::error::Error for Stalled {}
+
+/// Como [`run_lines`], mas mata o processo se ele passar `stall` sem escrever nenhuma linha.
+pub fn run_lines_watchdog(
     mut cmd: Command,
     cancel: &Cancel,
+    stall: Option<Duration>,
     mut on_line: impl FnMut(Stream, &str),
 ) -> Result<RunOutput> {
     let program = cmd.get_program().to_string_lossy().into_owned();
@@ -145,13 +165,22 @@ pub fn run_lines(
 
     let mut out = RunOutput { stdout: Vec::new(), stderr: Vec::new() };
     let mut open = 2;
+    let mut last_activity = std::time::Instant::now();
     while open > 0 {
         if cancel.is_cancelled() {
             kill(&mut child);
             bail!(Cancelled);
         }
+        if let Some(limit) = stall {
+            if last_activity.elapsed() > limit {
+                kill(&mut child);
+                let tail: Vec<&str> = out.stderr.iter().rev().take(8).rev().map(String::as_str).collect();
+                bail!(Stalled { program, secs: limit.as_secs(), tail: tail.join("\n") });
+            }
+        }
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Msg::Line(s, line)) => {
+                last_activity = std::time::Instant::now();
                 on_line(s, &line);
                 let v = if s == Stream::Stdout { &mut out.stdout } else { &mut out.stderr };
                 v.push(line);

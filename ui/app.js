@@ -581,6 +581,7 @@ $("btn-start").onclick = async () => {
     $("progress-card").classList.remove("hidden");
     $("progress-error").classList.add("hidden");
     $("yt-login-actions").classList.add("hidden");
+    $("log-actions").classList.add("hidden");
     $("progress-title").textContent = "Processando…";
     $("btn-cancel").classList.remove("hidden");
     $("bar-fill").style.width = "0%";
@@ -594,6 +595,7 @@ $("btn-start").onclick = async () => {
   }
 };
 
+$("btn-open-log").onclick = async () => invoke("reveal", { path: await invoke("log_path") });
 $("btn-cancel").onclick = () => currentJob && invoke("cancel_job", { id: currentJob.id });
 
 listen("job://progress", (p) => {
@@ -633,6 +635,7 @@ listen("job://error", (d) => {
     $("progress-error").textContent = d.message;
     $("progress-error").classList.remove("hidden");
     $("yt-login-actions").classList.toggle("hidden", !needsLogin);
+    $("log-actions").classList.toggle("hidden", needsLogin);
   }
   currentJob = null;
 });

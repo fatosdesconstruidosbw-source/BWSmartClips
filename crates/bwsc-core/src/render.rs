@@ -11,7 +11,7 @@ use crate::config::{CaptionStyle, ReframeMode};
 use crate::face;
 use crate::facecam::{self, Facecam};
 use crate::media::MediaInfo;
-use crate::process::{command, drain_stderr, kill, run_lines, Cancel, Cancelled, Stream};
+use crate::process::{command, drain_stderr, kill, run_lines_watchdog, Cancel, Cancelled, Stream};
 use crate::transcript::Word;
 
 /// Altura máxima de processamento (o vídeo é decodificado nesta resolução).
@@ -90,11 +90,14 @@ pub fn render(job: &RenderJob, cancel: &Cancel, on_progress: &mut dyn FnMut(f32,
         on_progress(0.0, "Procurando a webcam…");
         let cam = match job.facecam {
             Some(rect) => Some(Facecam { rect: rect.clamp(), face_x: rect.x + rect.w / 2.0, face_y: rect.y + rect.h * 0.45, framed: true }),
-            None => facecam::detect_in_video(job.ffmpeg, job.input, job.info.width, job.info.height, job.start, duration, cancel)?,
+            None => facecam::detect_in_video(job.ffmpeg, job.input, job.info.width, job.info.height, job.start, duration, cancel, &mut |p| {
+                on_progress(p * 0.1, &format!("Procurando a webcam… {:.0}%", p * 100.0))
+            })?,
         };
         match cam {
             Some(cam) => {
                 let plan = gameplay_plan(&g, &cam, job.cam_ratio);
+                on_progress(0.1, "Webcam encontrada — preparando o vídeo…");
                 let subs = prepare_captions(job, &g, duration, Some(plan.top_h))?;
                 return render_filter(job, &g, ReframeMode::Gameplay, Some(&plan), subs.as_deref(), cancel, &mut |p| {
                     on_progress(0.1 + p * 0.9, "Renderizando (gameplay)…")
@@ -150,10 +153,39 @@ fn prepare_captions(job: &RenderJob, g: &Geometry, duration: f64, divider: Optio
     }
     let ass = build_ass(job.words, job.captions, g.out_w, g.out_h, duration, divider);
     std::fs::write(job.work_dir.join("captions.ass"), ass)?;
+    write_fonts_conf(job.work_dir)?;
     // Caminhos relativos (o ffmpeg roda dentro de work_dir) evitam problemas
     // de escape com "C:\" no filtro de legendas no Windows.
     Ok(Some("subtitles=captions.ass:fontsdir=fonts".into()))
 }
+
+/// Configuração mínima do fontconfig: só a pasta de fontes do corte.
+/// Sem isso, no Windows o ffmpeg pode passar MUITO tempo indexando todas as fontes
+/// do sistema na primeira vez que usa legendas (parece travado).
+fn write_fonts_conf(work_dir: &Path) -> Result<()> {
+    let fonts = absolute(&work_dir.join("fonts"));
+    let cache = crate::config::cache_dir().join("fontconfig");
+    std::fs::create_dir_all(&cache)?;
+    let esc = |p: &Path| p.to_string_lossy().replace('&', "&amp;").replace('<', "&lt;");
+    let xml = format!(
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig>\n  <dir>{}</dir>\n  <cachedir>{}</cachedir>\n</fontconfig>\n",
+        esc(&fonts),
+        esc(&absolute(&cache))
+    );
+    std::fs::write(work_dir.join("fonts.conf"), xml)?;
+    Ok(())
+}
+
+/// Aponta o fontconfig do ffmpeg para o `fonts.conf` do corte (se existir).
+fn fontconfig_env(cmd: &mut std::process::Command, work_dir: &Path) {
+    let conf = work_dir.join("fonts.conf");
+    if conf.is_file() {
+        cmd.env("FONTCONFIG_FILE", absolute(&conf)).env("FONTCONFIG_PATH", absolute(work_dir));
+    }
+}
+
+/// Se o ffmpeg passar este tempo sem mandar progresso, consideramos travado.
+const RENDER_STALL: std::time::Duration = std::time::Duration::from_secs(240);
 
 fn encoder_args(job: &RenderJob) -> Vec<String> {
     [
@@ -251,7 +283,9 @@ fn render_filter(
         .args(["-filter_complex", &chain, "-map", "[v]", "-map", "0:a:0?"])
         .args(encoder_args(job))
         .arg(absolute(job.output));
-    run_lines(cmd, cancel, |stream, line| {
+    fontconfig_env(&mut cmd, job.work_dir);
+    on_progress(0.0);
+    run_lines_watchdog(cmd, cancel, Some(RENDER_STALL), |stream, line| {
         if stream == Stream::Stdout {
             if let Some(us) = line.strip_prefix("out_time_us=").or_else(|| line.strip_prefix("out_time_ms=")) {
                 if let Ok(v) = us.trim().parse::<f64>() {
@@ -305,6 +339,7 @@ fn render_tracked(
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    fontconfig_env(&mut enc, job.work_dir);
 
     let mut decoder = dec.spawn().context("não foi possível iniciar o ffmpeg (decodificação)")?;
     let dec_err = drain_stderr(&mut decoder);

@@ -359,10 +359,66 @@ async function refreshTools() {
   fillModelSelect($("s-whisper-model"), st.whisper_models, settings.whisper_model, "Automático (maior modelo instalado)");
   fillModelSelect($("s-llm-model"), st.llm_models, settings.llm_model, "Automático (recomendado ou o menor instalado)");
   ["install-whisper", "install-llm", "setup-whisper", "setup-llm"].forEach((id) => fillCatalog($(id)));
+  renderModelsDir(st);
   setInstalling(st.installing);
   $("btn-update").classList.toggle("hidden", !st.tools_installer_supported);
   updateEstimates();
   return st;
+}
+
+// Pasta dos modelos (vazio = padrão, dentro dos dados do app).
+function renderModelsDir(st) {
+  const custom = (settings.models_dir || "").trim() && settings.models_dir.trim() !== st.default_models_dir;
+  document.querySelectorAll("[data-models-dir]").forEach((box) => {
+    box.innerHTML = `<div class="out-row">
+        <button class="out-path" data-act="open" title="${esc(st.models_dir)}\n(clique para abrir)">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="out-text">${esc(st.models_dir)}</span>
+          <span class="out-tag ${custom ? "custom" : ""}">${custom ? "Escolhida" : "Padrão"}</span>
+        </button>
+        <button class="secondary" data-act="pick">Escolher pasta…</button>
+      </div>
+      ${custom ? '<button class="link out-reset" data-act="reset">Voltar para a pasta padrão</button>' : ""}
+      ${st.free_space_mb != null ? `<span class="muted small">Espaço livre nesse disco: <b>${gb(st.free_space_mb)}</b></span>` : ""}`;
+    box.querySelector('[data-act="pick"]').onclick = async () => {
+      const p = await invoke("pick_folder");
+      if (p) setModelsDir(p);
+    };
+    box.querySelector('[data-act="open"]').onclick = () => invoke("reveal", { path: st.models_dir }).catch(() => toast("A pasta será criada no primeiro download"));
+    const r = box.querySelector('[data-act="reset"]');
+    if (r) r.onclick = () => setModelsDir("");
+  });
+  const [n, mb] = st.leftover_models || [0, 0];
+  document.querySelectorAll("[data-leftover]").forEach((el) => {
+    el.classList.toggle("hidden", !(custom && n > 0));
+    if (!(custom && n > 0)) return;
+    el.innerHTML = `<span>Ainda há <b>${n} modelo(s)</b> (${gb(mb)}) na pasta padrão <span class="path">${esc(st.default_models_dir)}</span>.
+      Eles continuam funcionando, mas ocupam espaço nesse disco.</span>
+      <button class="primary" data-act="move">Mover para a nova pasta</button>`;
+    el.querySelector('[data-act="move"]').onclick = async () => {
+      try {
+        await invoke("move_models");
+        $("install-fill").style.width = "0%";
+        setInstalling(true);
+      } catch (e) {
+        toast(String(e), 5000);
+      }
+    };
+  });
+}
+
+async function setModelsDir(dir) {
+  const prev = settings.models_dir;
+  settings.models_dir = dir;
+  try {
+    await invoke("save_settings", { settings });
+    settings = await invoke("get_settings");
+  } catch (e) {
+    settings.models_dir = prev;
+    return toast(String(e), 6000);
+  }
+  await refreshTools();
+  toast(dir ? "Os modelos agora ficam na pasta escolhida" : "Voltando para a pasta padrão dos modelos");
 }
 
 function installRequest(prefix, force = false) {
@@ -423,7 +479,7 @@ listen("install://progress", (p) => {
 listen("install://done", async () => {
   setInstalling(false);
   $("install-msg").textContent = $("setup-msg").textContent = "Pronto ✔";
-  toast("Instalação concluída ✔");
+  toast("Pronto ✔");
   if (!$("setup-modal").classList.contains("hidden")) await finishSetup();
   await refreshTools();
 });

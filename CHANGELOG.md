@@ -11,6 +11,11 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   salvos em pastas usadas antes.
 - Ao clicar em **Gerar cortes**, a tela rola sozinha até o andamento da renderização.
 - Botão flutuante **voltar ao topo** no canto da tela.
+- **Escolha a pasta dos modelos de IA** (Configurações → Ferramentas e modelos, e também na primeira configuração):
+  guarde os modelos em outro disco (ex.: `D:`) para não lotar o C. Se você já tem arquivos `.gguf`/`.bin` numa pasta,
+  é só escolher essa pasta: o app usa os modelos de lá, sem copiar. Os modelos que já estavam na pasta antiga continuam
+  funcionando, e o botão **"Mover para a nova pasta"** leva todos para o novo lugar (com progresso, sem perder nada se
+  for interrompido).
 
 ## [1.2.0] - 2026-11-27
 

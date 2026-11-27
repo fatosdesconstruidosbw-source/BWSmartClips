@@ -170,6 +170,8 @@ pub struct Settings {
     pub output_dir: String,
     /// Pastas de saída já usadas, para a lista de Projetos continuar achando cortes antigos.
     pub output_history: Vec<String>,
+    /// Pasta dos modelos de IA (vazio = dentro dos dados do app).
+    pub models_dir: String,
 
     // Ferramentas externas (vazio = procurar automaticamente).
     pub ffmpeg_path: String,
@@ -234,6 +236,7 @@ impl Default for Settings {
         Self {
             output_dir: String::new(),
             output_history: Vec::new(),
+            models_dir: String::new(),
             ffmpeg_path: String::new(),
             ffprobe_path: String::new(),
             ytdlp_path: String::new(),
@@ -282,9 +285,39 @@ pub fn tools_dir() -> PathBuf {
     app_data_dir().join("tools")
 }
 
-/// Onde ficam os modelos (Whisper, detector de voz e IA local).
-pub fn models_dir() -> PathBuf {
+/// Pasta de modelos padrão, dentro dos dados do app.
+pub fn default_models_dir() -> PathBuf {
     app_data_dir().join("models")
+}
+
+static MODELS_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// Define a pasta de modelos escolhida pelo usuário (vazio = padrão).
+pub fn set_models_dir(dir: &str) {
+    let dir = dir.trim();
+    let v = (!dir.is_empty()).then(|| PathBuf::from(dir));
+    if let Ok(mut g) = MODELS_DIR_OVERRIDE.write() {
+        *g = v;
+    }
+}
+
+/// Onde ficam os modelos (Whisper, detector de voz e IA local): a pasta escolhida
+/// nas configurações ou a padrão.
+pub fn models_dir() -> PathBuf {
+    MODELS_DIR_OVERRIDE.read().ok().and_then(|g| g.clone()).unwrap_or_else(default_models_dir)
+}
+
+/// Pastas onde procurar modelos: a atual e, se for outra, a padrão
+/// (para os modelos antigos continuarem funcionando até serem movidos).
+pub fn models_search_dirs() -> Vec<PathBuf> {
+    let cur = models_dir();
+    let def = default_models_dir();
+    if cur == def { vec![cur] } else { vec![cur, def] }
+}
+
+/// Procura um arquivo de modelo pelo nome nas pastas de modelos.
+pub fn find_model_file(name: &str) -> Option<PathBuf> {
+    models_search_dirs().into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
 /// Cookies salvos pelo login feito dentro do app (`youtube`, `twitch` ou `kick`).
@@ -345,11 +378,20 @@ impl Settings {
     /// Carrega as configurações; se não existir arquivo, usa o padrão.
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
-            return Ok(Self::default());
+            let s = Self::default();
+            s.apply();
+            return Ok(s);
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("não foi possível ler {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("configuração inválida em {}", path.display()))
+        let s: Self = serde_json::from_str(&text).with_context(|| format!("configuração inválida em {}", path.display()))?;
+        s.apply();
+        Ok(s)
+    }
+
+    /// Aplica as configurações que valem para o processo todo (pasta de modelos).
+    pub fn apply(&self) {
+        set_models_dir(&self.models_dir);
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

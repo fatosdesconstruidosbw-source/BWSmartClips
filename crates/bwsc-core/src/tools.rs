@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
-use crate::config::{models_dir, tools_dir, Settings};
+use crate::config::{find_model_file, models_dir, models_search_dirs, tools_dir, Settings};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Tools {
@@ -26,6 +26,7 @@ pub struct Tools {
 
 impl Tools {
     pub fn locate(settings: &Settings) -> Self {
+        settings.apply();
         Self {
             ffmpeg: find_exe("ffmpeg", &settings.ffmpeg_path),
             ffprobe: find_exe("ffprobe", &settings.ffprobe_path),
@@ -155,20 +156,32 @@ pub fn find_llm_model(configured: &str) -> Option<PathBuf> {
     }
     let recommended = crate::installer::LLM_MODELS.iter().find(|m| m.recommended).map(|m| m.file);
     if let Some(file) = recommended {
-        let p = models_dir().join(file);
-        if p.is_file() {
+        if let Some(p) = find_model_file(file) {
             return Some(p);
         }
     }
     find_in_models(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"), false)
 }
 
-/// Procura na pasta de modelos; `largest` escolhe o maior arquivo, senão o menor.
+/// Todos os arquivos das pastas de modelos que passam no filtro (nome em minúsculas).
+/// Se o mesmo nome existir nas duas pastas, vale o da pasta atual.
+pub fn model_files(filter: impl Fn(&str) -> bool) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for dir in models_search_dirs() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for p in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
+            let Some(name) = p.file_name().and_then(|n| n.to_str()).map(str::to_lowercase) else { continue };
+            if p.is_file() && filter(&name) && !out.iter().any(|o| o.file_name() == p.file_name()) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Procura nas pastas de modelos; `largest` escolhe o maior arquivo, senão o menor.
 fn find_in_models(filter: impl Fn(&str) -> bool, largest: bool) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(models_dir()).ok()?;
-    let files = entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| {
-        p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| filter(&n.to_lowercase()))
-    });
+    let files = model_files(filter).into_iter();
     let size = |p: &PathBuf| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
     if largest {
         files.max_by_key(size)

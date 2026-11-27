@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{models_dir, tools_dir};
+use crate::config::{default_models_dir, find_model_file, models_dir, tools_dir};
 use crate::process::{Cancel, Cancelled};
 
 /// Um modelo que o instalador sabe baixar.
@@ -105,7 +105,7 @@ pub fn estimate_mb(req: &InstallRequest) -> u64 {
     if cfg!(windows) && (req.force || !tools_dir().join("llama").join("llama-server.exe").exists()) {
         mb += TOOLS_SIZE_MB;
     }
-    let missing = |m: &ModelInfo| if models_dir().join(m.file).exists() { 0 } else { m.size_mb };
+    let missing = |m: &ModelInfo| if find_model_file(m.file).is_some() { 0 } else { m.size_mb };
     if let Some(m) = whisper_model(&req.whisper_model) {
         mb += missing(m);
     }
@@ -146,7 +146,7 @@ pub fn install(req: &InstallRequest, cancel: &Cancel, on_progress: &mut dyn FnMu
     }
     for (kind, m) in wanted {
         let target = models.join(m.file);
-        if target.exists() {
+        if find_model_file(m.file).is_some() {
             continue;
         }
         let what = match kind {
@@ -400,6 +400,66 @@ pub fn import_models(paths: &[PathBuf], cancel: &Cancel, on_progress: &mut dyn F
     Ok(copied)
 }
 
+/// Extensões dos arquivos de modelo que o app usa.
+fn is_model_file(p: &Path) -> bool {
+    p.is_file() && p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf") || e.eq_ignore_ascii_case("bin"))
+}
+
+/// Modelos que ficaram na pasta padrão depois de escolher outra pasta: (quantidade, MB).
+pub fn leftover_models() -> (usize, u64) {
+    let (cur, def) = (models_dir(), default_models_dir());
+    if cur == def {
+        return (0, 0);
+    }
+    let files: Vec<PathBuf> = std::fs::read_dir(&def)
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| is_model_file(p)).collect())
+        .unwrap_or_default();
+    let mb = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum::<u64>() / 1_048_576;
+    (files.len(), mb)
+}
+
+/// Move os modelos da pasta padrão para a pasta escolhida. Na mesma unidade é instantâneo;
+/// entre discos copia com progresso e só apaga o original depois da cópia completa.
+pub fn move_models(cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<usize> {
+    move_models_between(&default_models_dir(), &models_dir(), cancel, on_progress)
+}
+
+fn move_models_between(from: &Path, to: &Path, cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<usize> {
+    if from == to {
+        bail!("a pasta de modelos já é a padrão");
+    }
+    std::fs::create_dir_all(to).with_context(|| format!("não foi possível criar {}", to.display()))?;
+    let files: Vec<PathBuf> = std::fs::read_dir(from)
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| is_model_file(p)).collect())
+        .unwrap_or_default();
+    let mut moved = 0;
+    for f in &files {
+        let name = f.file_name().unwrap().to_owned();
+        let label = name.to_string_lossy().into_owned();
+        let dest = to.join(&name);
+        let src_len = std::fs::metadata(f)?.len();
+        let same = dest.is_file() && std::fs::metadata(&dest)?.len() == src_len;
+        if !same && std::fs::rename(f, &dest).is_ok() {
+            moved += 1;
+            continue;
+        }
+        if !same {
+            let part = to.join(format!("{label}.movendo"));
+            copy_with_progress(f, &part, cancel, &mut |p, d, t| {
+                on_progress(InstallProgress { step: "mover".into(), progress: p, message: format!("Movendo {label}… {}", fmt_progress(d, t)) })
+            })
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(&part);
+            })?;
+            std::fs::rename(&part, &dest)?;
+        }
+        std::fs::remove_file(f).with_context(|| format!("copiado, mas não consegui apagar {}", f.display()))?;
+        moved += 1;
+    }
+    on_progress(InstallProgress { step: "ok".into(), progress: 1.0, message: format!("{moved} modelo(s) movido(s) para {}", to.display()) });
+    Ok(moved)
+}
+
 fn fmt_progress(done: u64, total: u64) -> String {
     let mb = |b: u64| b as f64 / 1_048_576.0;
     if total > 0 {
@@ -596,5 +656,28 @@ mod tests {
         let err = import_models(std::slice::from_ref(&src), &Cancel::new(), &mut |_| {});
         assert!(err.is_err());
         std::fs::remove_dir_all(&src).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+
+    #[test]
+    fn moves_only_model_files_and_removes_originals() {
+        let base = std::env::temp_dir().join(format!("bwsc-move-{}", std::process::id()));
+        let (from, to) = (base.join("de"), base.join("para"));
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("a.gguf"), vec![1u8; 1000]).unwrap();
+        std::fs::write(from.join("ggml-base.bin"), vec![2u8; 500]).unwrap();
+        std::fs::write(from.join("leia.txt"), b"x").unwrap();
+        let n = move_models_between(&from, &to, &Cancel::new(), &mut |_| {}).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(std::fs::read(to.join("a.gguf")).unwrap().len(), 1000);
+        assert!(to.join("ggml-base.bin").is_file());
+        assert!(!from.join("a.gguf").exists());
+        assert!(from.join("leia.txt").exists());
+        assert!(!to.join("leia.txt").exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

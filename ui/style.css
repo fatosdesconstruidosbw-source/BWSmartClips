@@ -362,3 +362,12 @@ details.advanced summary:hover { color: var(--text); }
 .to-top.show { opacity: 1; transform: none; pointer-events: auto; }
 .to-top:hover { filter: brightness(1.08); transform: translateY(-2px); }
 .to-top svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Pasta dos modelos */
+.models-dir { display: flex; flex-direction: column; gap: 4px; }
+.leftover { margin-top: 12px; padding: 10px 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.45;
+  background: rgba(200,245,60,.06); border: 1px solid rgba(200,245,60,.22); color: #e4e4e7;
+  display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.leftover button { flex: none; }
+.leftover .path { color: var(--muted); word-break: break-all; }
+.models-dir .out-reset, .models-dir .small { align-self: flex-start; }

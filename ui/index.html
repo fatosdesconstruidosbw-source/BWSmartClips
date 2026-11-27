@@ -320,6 +320,13 @@
       <div class="tab-body hidden" id="tab-tools">
         <div id="tools-table" class="tools-table"></div>
         <fieldset>
+          <legend>Pasta dos modelos de IA</legend>
+          <div class="models-dir" data-models-dir></div>
+          <p class="muted small" style="margin:8px 0 0">Os modelos ocupam alguns GB. Escolha outro disco (ex.: <b>D:</b>) para não lotar o C.
+            Se você já tem arquivos <b>.gguf</b>/<b>.bin</b> numa pasta, escolha essa pasta: o app usa os modelos de lá, sem copiar.</p>
+          <div class="leftover hidden" data-leftover></div>
+        </fieldset>
+        <fieldset>
           <legend>Baixar / atualizar</legend>
           <div class="grid two">
             <label>Modelo de transcrição (Whisper) <select id="install-whisper"></select></label>
@@ -422,6 +429,7 @@
           <select id="setup-llm"></select>
         </label>
         <label class="check"><input id="setup-vad" type="checkbox" checked /> Detector de voz (deixa a transcrição mais rápida)</label>
+        <div class="block out-block"><span>Onde guardar os modelos</span><div class="models-dir" data-models-dir></div></div>
         <div class="space-info" id="setup-space"></div>
         <div class="bar small hidden" id="setup-bar"><div id="setup-fill"></div></div>
         <p class="muted small" id="setup-msg"></p>

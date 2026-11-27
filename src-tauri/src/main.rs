@@ -42,6 +42,11 @@ fn get_settings(state: State<AppState>) -> Settings {
 #[tauri::command]
 fn save_settings(state: State<AppState>, mut settings: Settings) -> CmdResult<()> {
     settings.remember_output();
+    let md = settings.models_dir.trim();
+    if !md.is_empty() {
+        std::fs::create_dir_all(md).map_err(|e| format!("Não consegui usar a pasta de modelos {md}: {e}"))?;
+    }
+    settings.apply();
     settings.save(&Settings::default_path()).map_err(err)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
@@ -63,25 +68,23 @@ struct ToolStatus {
     llm_catalog: &'static [installer::ModelInfo],
     tools_dir: String,
     models_dir: String,
+    default_models_dir: String,
+    /// Modelos que ficaram na pasta padrão depois de escolher outra: (quantidade, MB).
+    leftover_models: (usize, u64),
     free_space_mb: Option<u64>,
     tools_installer_supported: bool,
     installing: bool,
 }
 
 fn list_models(pred: impl Fn(&str) -> bool) -> Vec<ModelFile> {
-    let mut v: Vec<ModelFile> = std::fs::read_dir(models_dir())
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| pred(&n.to_lowercase())))
-                .map(|p| ModelFile {
-                    name: p.file_name().unwrap().to_string_lossy().into_owned(),
-                    size_mb: std::fs::metadata(&p).map(|m| m.len() / 1_048_576).unwrap_or(0),
-                    path: p.to_string_lossy().into_owned(),
-                })
-                .collect()
+    let mut v: Vec<ModelFile> = bwsc_core::tools::model_files(pred)
+        .into_iter()
+        .map(|p| ModelFile {
+            name: p.file_name().unwrap().to_string_lossy().into_owned(),
+            size_mb: std::fs::metadata(&p).map(|m| m.len() / 1_048_576).unwrap_or(0),
+            path: p.to_string_lossy().into_owned(),
         })
-        .unwrap_or_default();
+        .collect();
     v.sort_by(|a, b| a.name.cmp(&b.name));
     v
 }
@@ -97,6 +100,8 @@ fn tool_status(state: State<AppState>) -> ToolStatus {
         llm_catalog: installer::LLM_MODELS,
         tools_dir: tools_dir().to_string_lossy().into_owned(),
         models_dir: models_dir().to_string_lossy().into_owned(),
+        default_models_dir: bwsc_core::config::default_models_dir().to_string_lossy().into_owned(),
+        leftover_models: installer::leftover_models(),
         free_space_mb: installer::free_space().map(|b| b / 1_048_576),
         tools_installer_supported: cfg!(windows),
         installing: state.install.lock().unwrap().is_some(),
@@ -156,6 +161,12 @@ async fn import_models(app: AppHandle) -> CmdResult<bool> {
     let state = app.state::<AppState>();
     spawn_install(app.clone(), &state, move |cancel, cb| installer::import_models(&paths, cancel, cb).map(|_| ()))?;
     Ok(true)
+}
+
+/// Move os modelos que ficaram na pasta padrão para a pasta escolhida.
+#[tauri::command]
+fn move_models(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    spawn_install(app, &state, |cancel, cb| installer::move_models(cancel, cb).map(|_| ()))
 }
 
 // ----------------------------------------------------------------- contas (YouTube, Twitch, Kick)
@@ -503,6 +514,7 @@ fn main() {
             log_path,
             list_projects,
             default_output_dir,
+            move_models,
             open_output_dir
         ])
         .run(tauri::generate_context!())

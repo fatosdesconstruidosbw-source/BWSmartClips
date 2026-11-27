@@ -13,8 +13,8 @@ e que funciona **100% offline por padrão**, com IA local. APIs online (Claude/O
 
 ## Como usar (Windows)
 
-1. Baixe o instalador na aba **Actions** (artefato `BWSmartClips-instalador-windows`) ou em **Releases**,
-   execute o `BWSmartClips_..._x64-setup.exe` e abra o **BWSmartClips** pelo menu Iniciar.
+1. Baixe o instalador mais recente em **[Releases](https://github.com/fatosdesconstruidosbw-source/BWSmartClips/releases/latest)**
+   (`BWSmartClips_X.Y.Z_x64-setup.exe`), execute e abra o **BWSmartClips** pelo menu Iniciar.
 2. Na primeira abertura, o **assistente** baixa tudo de uma vez para `%LOCALAPPDATA%\BWSmartClips`
    (ffmpeg, yt-dlp, Deno, whisper.cpp, llama.cpp, modelo Whisper, detector de voz e modelo de IA — cerca de 4 GB
    com as opções recomendadas). Depois disso, nada precisa de internet (só links do YouTube, claro).
@@ -115,6 +115,18 @@ crates/bwsc-cli      CLI `bwsmartclips`
 src-tauri            app desktop (Tauri 2): comandos e eventos
 ui                   interface (HTML/CSS/JS puro, sem etapa de build)
 ```
+
+## Publicar uma nova versão
+
+1. Anote as mudanças em `CHANGELOG.md`, numa seção `## [X.Y.Z] - AAAA-MM-DD`.
+2. Atualize a versão em `Cargo.toml` (`[workspace.package]`) e em `src-tauri/tauri.conf.json`.
+3. Faça o commit e crie a tag: `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+
+O GitHub Actions confere se a tag bate com a versão, compila e publica a página em Releases com o
+instalador, o `.msi`, a linha de comando e o texto do CHANGELOG. Tags com hífen (ex.: `v1.1.0-beta.1`)
+saem como pré-lançamento, para testes.
+
+Versões: `X.Y.Z` → correção aumenta o Z, recurso novo aumenta o Y, mudança grande aumenta o X.
 
 ## Licenças de terceiros
 

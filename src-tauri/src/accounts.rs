@@ -97,6 +97,7 @@ pub fn open(app: &AppHandle, p: &'static Platform) -> tauri::Result<()> {
         .inner_size(520.0, 780.0)
         .center()
         .user_agent(USER_AGENT)
+        .data_directory(crate::webview_data_dir())
         .build()?;
     let app = app.clone();
     std::thread::spawn(move || watch(app, p));

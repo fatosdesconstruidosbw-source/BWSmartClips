@@ -360,10 +360,40 @@ async function refreshTools() {
   fillModelSelect($("s-llm-model"), st.llm_models, settings.llm_model, "Automático (recomendado ou o menor instalado)");
   ["install-whisper", "install-llm", "setup-whisper", "setup-llm"].forEach((id) => fillCatalog($(id)));
   renderModelsDir(st);
+  renderDataDir(st);
   setInstalling(st.installing);
   $("btn-update").classList.toggle("hidden", !st.tools_installer_supported);
   updateEstimates();
   return st;
+}
+
+// Pasta do programa e dados de uma instalação anterior que ficaram no disco C.
+function renderDataDir(st) {
+  $("data-dir").textContent = st.data_dir;
+  const legacy = st.legacy_data;
+  const html = legacy
+    ? `<span>Ferramentas, modelos e cache de uma instalação anterior (<b>${gb(legacy[1])}</b>) ainda estão em
+        <span class="path">${esc(legacy[0])}</span>. Eles não são usados nesta instalação.</span>
+        <button class="primary" data-act="migrate">Mover para a pasta do programa</button>`
+    : "";
+  document.querySelectorAll("[data-legacy]").forEach((el) => {
+    el.classList.toggle("hidden", !legacy);
+    el.innerHTML = html;
+    const b = el.querySelector('[data-act="migrate"]');
+    if (b) b.onclick = async () => {
+      try {
+        await invoke("migrate_data");
+        $("install-fill").style.width = "0%";
+        setInstalling(true);
+        if ($("settings-modal").classList.contains("hidden")) openSettings("tab-tools");
+      } catch (e) {
+        toast(String(e), 5000);
+      }
+    };
+  });
+  $("legacy-banner").classList.toggle("hidden", !legacy);
+  if (legacy) $("tools-banner").classList.add("hidden");
+  if (legacy) $("legacy-size").textContent = gb(legacy[1]);
 }
 
 // Pasta dos modelos (vazio = padrão, dentro dos dados do app).
@@ -478,6 +508,7 @@ listen("install://progress", (p) => {
 });
 listen("install://done", async () => {
   setInstalling(false);
+  settings = await invoke("get_settings");
   $("install-msg").textContent = $("setup-msg").textContent = "Pronto ✔";
   toast("Pronto ✔");
   if (!$("setup-modal").classList.contains("hidden")) await finishSetup();
@@ -494,6 +525,7 @@ $("btn-update").onclick = () => startInstall("install", true);
 $("btn-import").onclick = startImport;
 $("btn-install-cancel").onclick = () => invoke("cancel_install");
 $("btn-banner-install").onclick = () => openSettings("tab-tools");
+$("btn-legacy-open").onclick = () => openSettings("tab-tools");
 
 // ------------------------------------------------------------- assistente
 
@@ -936,6 +968,10 @@ function tourStart() {
 function tourEnd() {
   $("tour").classList.add("hidden");
   try { localStorage.setItem("bwsc.tour_done", "1"); } catch (_) {}
+  if (settings && !settings.tour_done) {
+    settings.tour_done = true;
+    invoke("save_settings", { settings }).catch(() => {});
+  }
 }
 
 $("btn-tour").onclick = tourStart;
@@ -953,8 +989,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 function maybeFirstTour() {
-  let done = false;
-  try { done = localStorage.getItem("bwsc.tour_done") === "1"; } catch (_) {}
+  // Quem já usava o app antes desta versão (setup feito) não vê o tour de novo.
+  let done = !!settings.tour_done || !!settings.setup_done;
+  try { done = done || localStorage.getItem("bwsc.tour_done") === "1"; } catch (_) {}
   if (!done) setTimeout(tourStart, 600);
 }
 

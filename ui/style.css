@@ -371,3 +371,5 @@ details.advanced summary:hover { color: var(--text); }
 .leftover button { flex: none; }
 .leftover .path { color: var(--muted); word-break: break-all; }
 .models-dir .out-reset, .models-dir .small { align-self: flex-start; }
+.out-path.static { cursor: default; }
+.out-path.static:hover { background: rgba(0,0,0,.28); border-color: var(--line); }

@@ -24,6 +24,10 @@
     </nav>
   </header>
 
+  <div id="legacy-banner" class="banner hidden">
+    <div><strong>Dados no disco C:</strong> ferramentas e modelos de uma instalação anterior (<span id="legacy-size"></span>) podem ser movidos para a pasta do programa.</div>
+    <button class="pill-btn light" id="btn-legacy-open">Ver e mover</button>
+  </div>
   <div id="tools-banner" class="banner hidden">
     <div><strong>Faltam ferramentas:</strong> <span id="tools-missing"></span></div>
     <button class="pill-btn light" id="btn-banner-install">Instalar ferramentas</button>
@@ -319,6 +323,13 @@
 
       <div class="tab-body hidden" id="tab-tools">
         <div id="tools-table" class="tools-table"></div>
+        <fieldset>
+          <legend>Pasta do programa</legend>
+          <div class="out-path static"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="out-text" id="data-dir"></span></div>
+          <p class="muted small" style="margin:8px 0 0">Configurações, ferramentas, modelos e cache ficam junto do programa. Para usar outro disco,
+            reinstale e escolha a pasta (ex.: <b>D:\BWSmartClips</b>) na tela do instalador que pergunta <b>onde instalar</b>.</p>
+          <div class="leftover hidden" data-legacy></div>
+        </fieldset>
         <fieldset>
           <legend>Pasta dos modelos de IA</legend>
           <div class="models-dir" data-models-dir></div>

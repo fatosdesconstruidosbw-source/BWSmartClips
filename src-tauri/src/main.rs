@@ -69,6 +69,10 @@ struct ToolStatus {
     tools_dir: String,
     models_dir: String,
     default_models_dir: String,
+    /// Pasta do programa, onde ficam configurações, ferramentas, modelos e cache.
+    data_dir: String,
+    /// Dados de uma instalação anterior que ficaram no disco C: (pasta, MB).
+    legacy_data: Option<(String, u64)>,
     /// Modelos que ficaram na pasta padrão depois de escolher outra: (quantidade, MB).
     leftover_models: (usize, u64),
     free_space_mb: Option<u64>,
@@ -101,6 +105,8 @@ fn tool_status(state: State<AppState>) -> ToolStatus {
         tools_dir: tools_dir().to_string_lossy().into_owned(),
         models_dir: models_dir().to_string_lossy().into_owned(),
         default_models_dir: bwsc_core::config::default_models_dir().to_string_lossy().into_owned(),
+        data_dir: bwsc_core::config::app_data_dir().to_string_lossy().into_owned(),
+        legacy_data: installer::legacy_data().map(|(p, mb)| (p.to_string_lossy().into_owned(), mb)),
         leftover_models: installer::leftover_models(),
         free_space_mb: installer::free_space().map(|b| b / 1_048_576),
         tools_installer_supported: cfg!(windows),
@@ -161,6 +167,23 @@ async fn import_models(app: AppHandle) -> CmdResult<bool> {
     let state = app.state::<AppState>();
     spawn_install(app.clone(), &state, move |cancel, cb| installer::import_models(&paths, cancel, cb).map(|_| ()))?;
     Ok(true)
+}
+
+/// Move ferramentas, modelos e cache de uma instalação anterior (disco C) para a pasta do programa.
+#[tauri::command]
+fn migrate_data(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    let handle = app.clone();
+    spawn_install(app, &state, move |cancel, cb| {
+        installer::migrate_legacy_data(cancel, cb)?;
+        let settings = Settings::load(&Settings::default_path())?;
+        *handle.state::<AppState>().settings.lock().unwrap() = settings;
+        Ok(())
+    })
+}
+
+/// Pasta de dados do navegador interno (fica junto do programa, não no disco C).
+pub fn webview_data_dir() -> PathBuf {
+    bwsc_core::config::app_data_dir().join("webview")
 }
 
 /// Move os modelos que ficaram na pasta padrão para a pasta escolhida.
@@ -481,6 +504,9 @@ fn default_output_dir() -> String {
 }
 
 fn main() {
+    // Os dados ficam na pasta onde o programa foi instalado (ver config::app_data_dir).
+    bwsc_core::config::update_data_pointer();
+    installer::adopt_legacy_settings();
     let settings = Settings::load(&Settings::default_path()).unwrap_or_default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -515,8 +541,18 @@ fn main() {
             list_projects,
             default_output_dir,
             move_models,
+            migrate_data,
             open_output_dir
         ])
+        .setup(|app| {
+            // Janela principal criada aqui para guardar os dados do navegador interno
+            // na pasta do programa (o padrão seria o disco C).
+            let cfg = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("janela principal não configurada")?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &cfg)?
+                .data_directory(webview_data_dir())
+                .build()?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o BWSmartClips");
 }

@@ -226,6 +226,8 @@ pub struct Settings {
     pub use_cache: bool,
     /// O assistente de primeira abertura já foi concluído.
     pub setup_done: bool,
+    /// O tour "Como funciona" já foi visto.
+    pub tour_done: bool,
 
     /// Opções padrão para novos trabalhos.
     pub defaults: ClipOptions,
@@ -267,18 +269,70 @@ impl Default for Settings {
             output_height: 1920,
             use_cache: true,
             setup_done: false,
+            tour_done: false,
             defaults: ClipOptions::default(),
         }
     }
 }
 
-/// Pasta de dados do app: `%LOCALAPPDATA%\BWSmartClips` no Windows,
+/// Pasta de dados antiga/padrão: `%LOCALAPPDATA%\BWSmartClips` no Windows,
 /// `~/.local/share/BWSmartClips` no Linux.
-pub fn app_data_dir() -> PathBuf {
+pub fn legacy_data_dir() -> PathBuf {
     directories::BaseDirs::new()
         .map(|b| b.data_local_dir().join("BWSmartClips"))
         .unwrap_or_else(|| PathBuf::from("BWSmartClips"))
 }
+
+/// Arquivo (na pasta padrão) que aponta para a pasta de dados quando o app foi instalado
+/// em outro lugar, para a versão de linha de comando achar os mesmos dados.
+const DATA_POINTER: &str = "pasta-de-dados.txt";
+
+static DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Pasta onde o app foi instalado pelo instalador (tem o `uninstall.exe` ao lado).
+pub fn installed_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.to_path_buf();
+    dir.join("uninstall.exe").is_file().then_some(dir)
+}
+
+fn resolve_data_dir() -> PathBuf {
+    if let Some(v) = std::env::var_os("BWSMARTCLIPS_DATA").filter(|v| !v.is_empty()) {
+        return PathBuf::from(v);
+    }
+    // Os dados ficam junto do programa: instalou no D:, tudo fica no D:.
+    if let Some(dir) = installed_dir() {
+        return dir;
+    }
+    if let Ok(text) = std::fs::read_to_string(legacy_data_dir().join(DATA_POINTER)) {
+        let p = PathBuf::from(text.trim());
+        if !text.trim().is_empty() && p.is_dir() {
+            return p;
+        }
+    }
+    legacy_data_dir()
+}
+
+/// Pasta de dados do app (configurações, ferramentas, modelos, cache e registros):
+/// a pasta onde o programa foi instalado ou, sem instalador, a pasta padrão.
+pub fn app_data_dir() -> PathBuf {
+    DATA_DIR.get_or_init(resolve_data_dir).clone()
+}
+
+/// Grava (ou apaga) o apontador na pasta padrão para a linha de comando achar os dados.
+pub fn update_data_pointer() {
+    let (cur, legacy) = (app_data_dir(), legacy_data_dir());
+    let ptr = legacy.join(DATA_POINTER);
+    if cur == legacy {
+        let _ = std::fs::remove_file(ptr);
+    } else if std::fs::read_to_string(&ptr).ok().as_deref().map(str::trim) != Some(&*cur.to_string_lossy()) {
+        let _ = std::fs::create_dir_all(&legacy);
+        let _ = std::fs::write(ptr, cur.to_string_lossy().as_bytes());
+    }
+}
+
+/// Itens de dados do app que podem ser levados para outra pasta.
+pub const DATA_ITEMS: &[&str] = &["settings.json", "tools", "models", "cache", "logs", "youtube-cookies.txt", "twitch-cookies.txt", "kick-cookies.txt"];
 
 /// Onde ficam ffmpeg, yt-dlp, whisper-cli baixados pelo instalador do app.
 pub fn tools_dir() -> PathBuf {

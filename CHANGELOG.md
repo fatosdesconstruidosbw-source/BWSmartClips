@@ -11,6 +11,11 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   salvos em pastas usadas antes.
 - Ao clicar em **Gerar cortes**, a tela rola sozinha até o andamento da renderização.
 - Botão flutuante **voltar ao topo** no canto da tela.
+- **Instale o programa em qualquer disco:** escolha a pasta (ex.: `D:\BWSmartClips`) no instalador, que agora está em
+  português. Configurações, ferramentas, modelos, cache e os dados do navegador interno passam a ficar **junto do
+  programa**, em vez do disco C.
+- Se já existia uma instalação no disco C, o app avisa e o botão **"Mover para a pasta do programa"** leva ferramentas,
+  modelos e cache para a nova pasta (com progresso; as configurações são aproveitadas automaticamente).
 - **Escolha a pasta dos modelos de IA** (Configurações → Ferramentas e modelos, e também na primeira configuração):
   guarde os modelos em outro disco (ex.: `D:`) para não lotar o C. Se você já tem arquivos `.gguf`/`.bin` numa pasta,
   é só escolher essa pasta: o app usa os modelos de lá, sem copiar. Os modelos que já estavam na pasta antiga continuam

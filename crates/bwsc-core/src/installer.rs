@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{default_models_dir, find_model_file, models_dir, tools_dir};
+use crate::config::{app_data_dir, default_models_dir, find_model_file, legacy_data_dir, models_dir, tools_dir, DATA_ITEMS};
 use crate::process::{Cancel, Cancelled};
 
 /// Um modelo que o instalador sabe baixar.
@@ -460,6 +460,122 @@ fn move_models_between(from: &Path, to: &Path, cancel: &Cancel, on_progress: &mu
     Ok(moved)
 }
 
+// ----------------------------------------------------------------- dados de uma instalação anterior
+
+fn tree_size(p: &Path) -> u64 {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(p)
+            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| tree_size(&e.path())).sum())
+            .unwrap_or(0),
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    }
+}
+
+/// Ferramentas, modelos e cache que ficaram na pasta padrão (disco C) depois de instalar o app
+/// em outro lugar: (pasta, MB). `None` se não houver nada para mover.
+pub fn legacy_data() -> Option<(PathBuf, u64)> {
+    let (cur, old) = (app_data_dir(), legacy_data_dir());
+    if cur == old {
+        return None;
+    }
+    let bytes: u64 = DATA_ITEMS.iter().filter(|i| **i != "settings.json").map(|i| tree_size(&old.join(i))).sum();
+    (bytes > 0).then_some((old, bytes / 1_048_576))
+}
+
+/// Na primeira vez numa pasta nova, aproveita as configurações da instalação anterior.
+pub fn adopt_legacy_settings() {
+    let (cur, old) = (app_data_dir(), legacy_data_dir());
+    let (new, prev) = (cur.join("settings.json"), old.join("settings.json"));
+    if cur != old && !new.exists() && prev.is_file() {
+        let _ = std::fs::create_dir_all(&cur);
+        if std::fs::copy(&prev, &new).is_ok() {
+            let _ = rewrite_paths(&new, &old, &cur);
+        }
+    }
+}
+
+/// Troca, nas configurações, caminhos que apontavam para a pasta antiga.
+fn rewrite_paths(settings_file: &Path, from: &Path, to: &Path) -> Result<()> {
+    let text = std::fs::read_to_string(settings_file)?;
+    let mut v: serde_json::Value = serde_json::from_str(&text)?;
+    let (from, to) = (from.to_string_lossy().into_owned(), to.to_string_lossy().into_owned());
+    fn walk(v: &mut serde_json::Value, from: &str, to: &str) {
+        match v {
+            serde_json::Value::String(s) if s.starts_with(from) => *s = format!("{to}{}", &s[from.len()..]),
+            serde_json::Value::Array(a) => a.iter_mut().for_each(|x| walk(x, from, to)),
+            serde_json::Value::Object(o) => o.values_mut().for_each(|x| walk(x, from, to)),
+            _ => {}
+        }
+    }
+    walk(&mut v, &from, &to);
+    std::fs::write(settings_file, serde_json::to_string_pretty(&v)?)?;
+    Ok(())
+}
+
+/// Move ferramentas, modelos, cache e registros da pasta padrão para a pasta do programa.
+pub fn migrate_legacy_data(cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<()> {
+    migrate_data_between(&legacy_data_dir(), &app_data_dir(), cancel, on_progress)
+}
+
+fn migrate_data_between(from: &Path, to: &Path, cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<()> {
+    if from == to {
+        bail!("os dados já estão na pasta do programa");
+    }
+    std::fs::create_dir_all(to).with_context(|| format!("não foi possível criar {}", to.display()))?;
+    let items: Vec<&str> = DATA_ITEMS.iter().copied().filter(|i| from.join(i).exists()).collect();
+    let total: u64 = items.iter().map(|i| tree_size(&from.join(i))).sum::<u64>().max(1);
+    let mut done: u64 = 0;
+    for item in items {
+        let (src, dest) = (from.join(item), to.join(item));
+        if item == "settings.json" && dest.exists() {
+            // As configurações já foram adotadas na pasta nova; a antiga só é apagada.
+            let _ = std::fs::remove_file(&src);
+            continue;
+        }
+        move_tree(&src, &dest, cancel, &mut done, total, on_progress)?;
+    }
+    let settings = to.join("settings.json");
+    if settings.is_file() {
+        rewrite_paths(&settings, from, to)?;
+    }
+    on_progress(InstallProgress { step: "ok".into(), progress: 1.0, message: format!("Dados movidos para {}", to.display()) });
+    Ok(())
+}
+
+/// Move arquivo ou pasta: renomeia se der (mesmo disco); senão copia e apaga o original.
+fn move_tree(src: &Path, dest: &Path, cancel: &Cancel, done: &mut u64, total: u64, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<()> {
+    if !dest.exists() && std::fs::rename(src, dest).is_ok() {
+        *done += tree_size(dest);
+        return Ok(());
+    }
+    if src.is_dir() {
+        std::fs::create_dir_all(dest)?;
+        for e in std::fs::read_dir(src)?.filter_map(|e| e.ok()) {
+            move_tree(&e.path(), &dest.join(e.file_name()), cancel, done, total, on_progress)?;
+        }
+        let _ = std::fs::remove_dir(src);
+        return Ok(());
+    }
+    let len = std::fs::metadata(src)?.len();
+    let same = dest.is_file() && std::fs::metadata(dest)?.len() == len;
+    if !same {
+        let label = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let base = *done;
+        copy_with_progress(src, dest, cancel, &mut |_, d, _| {
+            let all = base + d;
+            on_progress(InstallProgress {
+                step: "mover".into(),
+                progress: (all as f64 / total as f64).min(1.0) as f32,
+                message: format!("Movendo {label}… {}", fmt_progress(all, total)),
+            })
+        })?;
+    }
+    *done += len;
+    std::fs::remove_file(src).with_context(|| format!("copiado, mas não consegui apagar {}", src.display()))?;
+    Ok(())
+}
+
 fn fmt_progress(done: u64, total: u64) -> String {
     let mb = |b: u64| b as f64 / 1_048_576.0;
     if total > 0 {
@@ -678,6 +794,30 @@ mod move_tests {
         assert!(!from.join("a.gguf").exists());
         assert!(from.join("leia.txt").exists());
         assert!(!to.join("leia.txt").exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn migrates_data_folders_and_rewrites_paths() {
+        let base = std::env::temp_dir().join(format!("bwsc-migrate-{}", std::process::id()));
+        let (from, to) = (base.join("c"), base.join("d"));
+        std::fs::create_dir_all(from.join("models")).unwrap();
+        std::fs::create_dir_all(from.join("tools").join("llama")).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join("models").join("m.gguf"), vec![1u8; 3000]).unwrap();
+        std::fs::write(from.join("tools").join("llama").join("llama-server.exe"), b"exe").unwrap();
+        std::fs::write(from.join("uninstall.exe"), b"old app").unwrap();
+        let model = from.join("models").join("m.gguf").to_string_lossy().replace('\\', "\\\\");
+        std::fs::write(to.join("settings.json"), format!("{{\"llm_model\": \"{model}\", \"setup_done\": true}}")).unwrap();
+        std::fs::write(from.join("settings.json"), b"{}").unwrap();
+        migrate_data_between(&from, &to, &Cancel::new(), &mut |_| {}).unwrap();
+        assert!(to.join("models").join("m.gguf").is_file());
+        assert!(to.join("tools").join("llama").join("llama-server.exe").is_file());
+        assert!(!from.join("models").exists());
+        assert!(!from.join("settings.json").exists());
+        assert!(from.join("uninstall.exe").exists(), "o que não é dado do app fica");
+        let st = std::fs::read_to_string(to.join("settings.json")).unwrap();
+        assert!(st.contains(&*to.join("models").join("m.gguf").to_string_lossy().replace('\\', "\\\\")), "{st}");
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

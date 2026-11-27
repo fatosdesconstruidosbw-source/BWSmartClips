@@ -5,6 +5,8 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+## [1.2.0] - 2026-11-27
+
 ### Novidades
 - **Layout Gameplay** (Reenquadrar): para lives de jogos, a webcam do streamer fica cravada em cima e o jogo embaixo,
   com a legenda na divisa. O app encontra a webcam sozinho em cada corte (o rosto que fica parado num canto

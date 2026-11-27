@@ -56,9 +56,10 @@ pub const TOOLS_SIZE_MB: u64 = 320;
 
 const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
-const WHISPER_URL: &str = "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
+const WHISPER_REPO: &str = "ggml-org/whisper.cpp";
+const WHISPER_ASSET: &str = "whisper-bin-x64.zip";
+const LLAMA_REPO: &str = "ggml-org/llama.cpp";
 const DENO_URL: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
-const LLAMA_RELEASES_API: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
 
 pub fn whisper_model(id: &str) -> Option<&'static ModelInfo> {
     WHISPER_MODELS.iter().find(|m| m.id == id)
@@ -200,8 +201,11 @@ fn install_windows_tools(
 
     let whisper_dir = tools.join("whisper");
     if force || !whisper_dir.join("whisper-cli.exe").exists() {
+        step("whisper", 0.0, "Procurando a versão mais recente do whisper.cpp…".into());
+        let url = find_release_asset(client, WHISPER_REPO, |n| n == WHISPER_ASSET)
+            .context("não foi possível encontrar o pacote do whisper.cpp para Windows")?;
         let zip = tmp.join("whisper.zip");
-        download_file(client, WHISPER_URL, &zip, cancel, &mut |p, d, t| step("whisper", p, format!("Baixando whisper.cpp… {}", fmt_progress(d, t))))?;
+        download_file(client, &url, &zip, cancel, &mut |p, d, t| step("whisper", p, format!("Baixando whisper.cpp… {}", fmt_progress(d, t))))?;
         step("whisper", 1.0, "Extraindo whisper.cpp…".into());
         std::fs::create_dir_all(&whisper_dir)?;
         extract_flat(&zip, &whisper_dir, &[".exe", ".dll"])?;
@@ -213,7 +217,8 @@ fn install_windows_tools(
     let llama_dir = tools.join("llama");
     if force || !llama_dir.join("llama-server.exe").exists() {
         step("llama", 0.0, "Procurando a versão mais recente do llama.cpp…".into());
-        let url = latest_llama_asset(client).context("não foi possível encontrar o pacote do llama.cpp para Windows")?;
+        let url = find_release_asset(client, LLAMA_REPO, is_llama_cpu_asset)
+            .context("não foi possível encontrar o pacote do llama.cpp para Windows")?;
         let zip = tmp.join("llama.zip");
         download_file(client, &url, &zip, cancel, &mut |p, d, t| step("llama", p, format!("Baixando llama.cpp (IA local)… {}", fmt_progress(d, t))))?;
         step("llama", 1.0, "Extraindo llama.cpp…".into());
@@ -227,24 +232,35 @@ fn install_windows_tools(
     Ok(())
 }
 
-/// URL do pacote "win-cpu-x64" da última versão do llama.cpp.
-fn latest_llama_asset(client: &reqwest::blocking::Client) -> Result<String> {
-    let v: serde_json::Value = client
-        .get(LLAMA_RELEASES_API)
-        .header("Accept", "application/vnd.github+json")
+/// Procura, da versão mais nova para a mais antiga (incluindo pré-lançamentos/builds
+/// numerados), o primeiro arquivo que satisfaz `want`. Alguns projetos publicam os
+/// executáveis só nos builds numerados, e não na versão marcada como "latest".
+fn find_release_asset(client: &reqwest::blocking::Client, repo: &str, want: fn(&str) -> bool) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
+    let mut req = client.get(&url).header("Accept", "application/vnd.github+json");
+    // No CI usamos o token para não esbarrar no limite de consultas anônimas.
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        req = req.bearer_auth(token);
+    }
+    let releases: serde_json::Value = req
         .send()?
-        .error_for_status()?
+        .error_for_status()
+        .with_context(|| format!("o GitHub recusou a consulta de versões de {repo} (tente de novo mais tarde)"))?
         .json()?;
-    pick_llama_asset(&v).context("nenhum pacote win-cpu-x64 na última versão")
+    pick_asset(&releases, want).with_context(|| format!("nenhuma versão recente de {repo} tem o pacote para Windows"))
 }
 
-pub fn pick_llama_asset(release: &serde_json::Value) -> Option<String> {
-    release["assets"].as_array()?.iter().find_map(|a| {
-        let name = a["name"].as_str()?;
-        (name.contains("bin-win-cpu-x64") && name.ends_with(".zip"))
-            .then(|| a["browser_download_url"].as_str().map(str::to_string))
-            .flatten()
+pub fn pick_asset(releases: &serde_json::Value, want: fn(&str) -> bool) -> Option<String> {
+    releases.as_array()?.iter().filter(|r| r["draft"] != true).find_map(|r| {
+        r["assets"].as_array()?.iter().find_map(|a| {
+            let name = a["name"].as_str()?;
+            want(name).then(|| a["browser_download_url"].as_str().map(str::to_string)).flatten()
+        })
     })
+}
+
+fn is_llama_cpu_asset(name: &str) -> bool {
+    name.contains("bin-win-cpu-x64") && name.ends_with(".zip")
 }
 
 /// Copia modelos (.bin/.gguf) de arquivos ou pastas (ex.: um pendrive) para a pasta de modelos.
@@ -402,12 +418,27 @@ mod tests {
 
     #[test]
     fn picks_cpu_asset() {
-        let rel = serde_json::json!({"assets": [
+        let rels = serde_json::json!([{"assets": [
             {"name": "llama-b9000-bin-win-cuda-12.4-x64.zip", "browser_download_url": "u1"},
             {"name": "llama-b9000-bin-win-cpu-arm64.zip", "browser_download_url": "u2"},
             {"name": "llama-b9000-bin-win-cpu-x64.zip", "browser_download_url": "u3"}
-        ]});
-        assert_eq!(pick_llama_asset(&rel).as_deref(), Some("u3"));
+        ]}]);
+        assert_eq!(pick_asset(&rels, is_llama_cpu_asset).as_deref(), Some("u3"));
+    }
+
+    #[test]
+    fn skips_release_without_binaries() {
+        // Como no whisper.cpp: a versão "latest" (v1.9.5) só tem código-fonte;
+        // os executáveis estão no build numerado (b5454).
+        let rels = serde_json::json!([
+            {"tag_name": "b5455", "draft": true, "assets": [{"name": "whisper-bin-x64.zip", "browser_download_url": "rascunho"}]},
+            {"tag_name": "v1.9.5", "assets": []},
+            {"tag_name": "b5454", "prerelease": true, "assets": [
+                {"name": "whisper-blas-bin-x64.zip", "browser_download_url": "blas"},
+                {"name": "whisper-bin-x64.zip", "browser_download_url": "certo"}
+            ]}
+        ]);
+        assert_eq!(pick_asset(&rels, |n| n == WHISPER_ASSET).as_deref(), Some("certo"));
     }
 
     #[test]
@@ -417,6 +448,22 @@ mod tests {
         }
         assert!(WHISPER_MODELS.iter().all(|m| m.url.starts_with(HF_WHISPER)));
         assert_eq!(LLM_MODELS.iter().filter(|m| m.recommended).count(), 1);
+    }
+
+    /// Consulta o GitHub de verdade (roda no CI do Windows).
+    #[test]
+    #[ignore]
+    fn live_release_lookup() {
+        let c = client().unwrap();
+        let w = find_release_asset(&c, WHISPER_REPO, |n| n == WHISPER_ASSET).unwrap();
+        assert!(w.ends_with("/whisper-bin-x64.zip"), "{w}");
+        let l = find_release_asset(&c, LLAMA_REPO, is_llama_cpu_asset).unwrap();
+        assert!(l.contains("bin-win-cpu-x64") && l.ends_with(".zip"), "{l}");
+        for url in [&w, &l] {
+            let r = c.head(url.as_str()).send().unwrap();
+            assert!(r.status().is_success(), "{url}: {}", r.status());
+        }
+        eprintln!("whisper: {w}\nllama: {l}");
     }
 
     #[test]

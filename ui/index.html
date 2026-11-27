@@ -105,6 +105,23 @@
             <div class="lay-art"><div class="lay-src"></div><span class="dots">• • •</span><div class="lay-src same"></div></div>
             <span class="lay-name">Original</span>
           </button>
+          <button class="layout wide" data-value="gameplay">
+            <div class="lay-art">
+              <div class="lay-src game"><i class="cam"></i></div><span class="dots">• • •</span>
+              <div class="lay-out split"><i class="top"><i class="face f1"></i></i><i class="bottom"></i></div>
+            </div>
+            <span class="lay-name">Gameplay <b class="new">NOVO</b> <em>webcam em cima · jogo embaixo</em></span>
+          </button>
+        </div>
+        <div class="gameplay-opts hidden" id="gameplay-opts">
+          <label><span>Tamanho da webcam <span class="muted" id="cam-ratio-label">38%</span></span>
+            <input id="opt-cam-ratio" type="range" min="25" max="55" step="1" />
+          </label>
+          <div class="cam-pos">
+            <span id="cam-pos-text" class="muted small">Webcam: detectada automaticamente em cada corte</span>
+            <button class="pill-btn" id="btn-mark-cam">Conferir / marcar webcam</button>
+            <button class="link hidden" id="btn-auto-cam">Voltar ao automático</button>
+          </div>
         </div>
       </div>
     </section>
@@ -397,6 +414,28 @@
           <button class="secondary" id="setup-import">Importar modelos…</button>
           <button class="primary" id="setup-go">Baixar e instalar</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Marcar a webcam (layout Gameplay) -->
+  <div class="modal hidden" id="facecam-modal">
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h2>Onde está a webcam?</h2>
+        <button class="ghost" data-close>✕</button>
+      </div>
+      <div class="tab-body">
+        <p class="muted small" id="fc-hint">Arraste para desenhar um retângulo em volta da webcam do streamer. Arraste o retângulo para movê-lo.</p>
+        <div class="fc-stage" id="fc-stage">
+          <img id="fc-img" alt="" draggable="false" />
+          <div id="fc-box" class="hidden"><span>Webcam</span></div>
+          <div class="fc-loading" id="fc-loading">Lendo o vídeo e procurando a webcam…</div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="ghost" id="fc-detect">Usar a detecção automática</button>
+        <button class="primary" id="fc-save">Usar esta posição</button>
       </div>
     </div>
   </div>

@@ -51,6 +51,8 @@ pub enum ReframeMode {
     Blur,
     /// Mantém o formato original.
     Original,
+    /// Para lives de jogos: webcam do streamer em cima, gameplay embaixo.
+    Gameplay,
 }
 
 /// Posição vertical das legendas.
@@ -137,6 +139,10 @@ pub struct ClipOptions {
     pub captions: CaptionStyle,
     /// Ignora o cache e refaz transcrição e análise.
     pub reanalyze: bool,
+    /// Layout Gameplay: fração da altura ocupada pela webcam (0.25–0.55).
+    pub cam_ratio: f64,
+    /// Layout Gameplay: posição da webcam marcada à mão (vazio = detectar em cada corte).
+    pub facecam: Option<crate::facecam::NormRect>,
 }
 
 impl Default for ClipOptions {
@@ -150,6 +156,8 @@ impl Default for ClipOptions {
             reframe: ReframeMode::Face,
             captions: CaptionStyle::default(),
             reanalyze: false,
+            cam_ratio: 0.38,
+            facecam: None,
         }
     }
 }

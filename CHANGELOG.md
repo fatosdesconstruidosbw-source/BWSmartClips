@@ -5,6 +5,12 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+### Novidades
+- **Layout Gameplay** (Reenquadrar): para lives de jogos, a webcam do streamer fica cravada em cima e o jogo embaixo,
+  com a legenda na divisa. O app encontra a webcam sozinho em cada corte (o rosto que fica parado num canto
+  e as bordas da moldura), e dá para conferir ou marcar a posição à mão num quadro do vídeo.
+- Tamanho da webcam ajustável (25% a 55% da altura). Se um corte não tiver webcam, ele usa "Preencher".
+
 ## [1.1.0] - 2026-11-27
 
 ### Novidades

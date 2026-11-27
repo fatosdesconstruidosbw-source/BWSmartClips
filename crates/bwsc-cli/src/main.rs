@@ -25,6 +25,7 @@ struct Cli {
 #[derive(Clone, Copy, ValueEnum)]
 enum Reframe {
     Face,
+    Gameplay,
     Center,
     Blur,
     Original,
@@ -158,6 +159,7 @@ fn real_main() -> Result<()> {
             if let Some(r) = reframe {
                 opts.reframe = match r {
                     Reframe::Face => ReframeMode::Face,
+                    Reframe::Gameplay => ReframeMode::Gameplay,
                     Reframe::Center => ReframeMode::Center,
                     Reframe::Blur => ReframeMode::Blur,
                     Reframe::Original => ReframeMode::Original,

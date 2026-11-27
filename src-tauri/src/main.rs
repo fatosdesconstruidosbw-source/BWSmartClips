@@ -176,6 +176,62 @@ fn account_logout(platform: String) -> CmdResult<()> {
     accounts::logout(&platform).map_err(err)
 }
 
+// ----------------------------------------------------------------- layout Gameplay
+
+#[derive(Serialize)]
+struct FacecamPreview {
+    image: String,
+    width: u32,
+    height: u32,
+    detected: Option<bwsc_core::facecam::NormRect>,
+}
+
+/// Arquivo de vídeo local para a fonte (arquivo, ou link já baixado antes).
+fn local_video(source: &str) -> Result<PathBuf, String> {
+    match Source::parse(source) {
+        Source::File(p) if p.is_file() => Ok(p),
+        Source::File(_) => Err("Arquivo não encontrado.".into()),
+        Source::Url(u) => Cache::new(true).downloaded(&u).map(|(p, _)| p).ok_or_else(|| {
+            "Para marcar a webcam de um link, gere os cortes desse vídeo uma vez (ele fica salvo) \
+             ou carregue o arquivo do vídeo."
+                .to_string()
+        }),
+    }
+}
+
+/// Um quadro do vídeo e a webcam detectada nele (para conferir/ajustar à mão).
+#[tauri::command]
+async fn facecam_preview(state: State<'_, AppState>, source: String) -> CmdResult<FacecamPreview> {
+    let settings = state.settings.lock().unwrap().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<FacecamPreview, String> {
+        let video = local_video(&source)?;
+        let tools = Tools::locate(&settings);
+        let ffmpeg = tools.ffmpeg().map_err(err)?.to_path_buf();
+        let cancel = Cancel::new();
+        let info = bwsc_core::media::probe(tools.ffprobe().map_err(err)?, &video, &cancel).map_err(err)?;
+        // Nome novo a cada vez (o WebView guarda imagens em cache); apaga as anteriores.
+        let dir = bwsc_core::config::cache_dir().join("previews");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(err)?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let image = dir.join(format!("webcam-{stamp}.jpg"));
+        let at = info.duration * 0.3;
+        let mut cmd = bwsc_core::process::command(&ffmpeg);
+        cmd.args(["-y", "-v", "error", "-ss", &format!("{at:.2}"), "-i"])
+            .arg(&video)
+            .args(["-frames:v", "1", "-vf", "scale=960:-2", "-q:v", "3"])
+            .arg(&image);
+        bwsc_core::process::run(cmd, &cancel).map_err(err)?;
+        let (start, dur) = (info.duration * 0.1, (info.duration * 0.8).max(1.0));
+        let detected = bwsc_core::facecam::detect_in_video(&ffmpeg, &video, info.width, info.height, start, dur, &cancel)
+            .map_err(err)?
+            .map(|c| c.rect);
+        Ok(FacecamPreview { image: image.to_string_lossy().into_owned(), width: info.width, height: info.height, detected })
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 fn clear_cache() -> CmdResult<()> {
     Cache::new(true).clear().map_err(err)
@@ -351,6 +407,7 @@ fn main() {
             estimate_install,
             import_models,
             clear_cache,
+            facecam_preview,
             account_login,
             account_status,
             account_logout,

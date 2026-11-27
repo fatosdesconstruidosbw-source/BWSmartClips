@@ -399,6 +399,8 @@ pub fn render_plans(
             output_height: settings.output_height,
             x264_preset: &settings.x264_preset,
             x264_crf: settings.x264_crf,
+            cam_ratio: opts.cam_ratio,
+            facecam: opts.facecam,
             work_dir: &clip_work,
             output: &output,
         };

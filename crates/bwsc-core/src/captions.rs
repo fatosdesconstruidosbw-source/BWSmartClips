@@ -66,15 +66,18 @@ pub fn chunk_words(words: &[Word], style: &CaptionStyle) -> Vec<Vec<Word>> {
 }
 
 /// Gera o arquivo .ass. `words` têm tempos relativos ao início do corte.
-pub fn build_ass(words: &[Word], style: &CaptionStyle, width: u32, height: u32, clip_len: f64) -> String {
+/// `divider`: no layout Gameplay, a altura (px) da divisa webcam/jogo — com a posição
+/// "Embaixo", a legenda fica centralizada sobre essa divisa.
+pub fn build_ass(words: &[Word], style: &CaptionStyle, width: u32, height: u32, clip_len: f64, divider: Option<u32>) -> String {
     let scale = width as f64 / 1080.0;
     let font_size = (style.font_size as f64 * scale).round() as u32;
     let outline = style.outline as f64 * scale;
     let shadow = style.shadow as f64 * scale;
-    let (alignment, margin_v) = match style.position {
-        CaptionPosition::Top => (8, (height as f64 * 0.16) as u32),
-        CaptionPosition::Middle => (5, 0),
-        CaptionPosition::Bottom => (2, (height as f64 * 0.24) as u32),
+    let (alignment, margin_v) = match (style.position, divider) {
+        (CaptionPosition::Bottom, Some(d)) => (8, d.saturating_sub((font_size as f64 * 0.62) as u32)),
+        (CaptionPosition::Top, _) => (8, (height as f64 * 0.16) as u32),
+        (CaptionPosition::Middle, _) => (5, 0),
+        (CaptionPosition::Bottom, None) => (2, (height as f64 * 0.24) as u32),
     };
     let margin_h = (60.0 * scale) as u32;
     let primary = ass_color(&style.color);
@@ -177,7 +180,7 @@ mod tests {
     fn one_event_per_word_with_highlight() {
         let style = CaptionStyle::default();
         let words = vec![w(0.0, 0.3, "olá"), w(0.3, 0.7, "{mundo}")];
-        let ass = build_ass(&words, &style, 1080, 1920, 5.0);
+        let ass = build_ass(&words, &style, 1080, 1920, 5.0, None);
         let events: Vec<&str> = ass.lines().filter(|l| l.starts_with("Dialogue:")).collect();
         assert_eq!(events.len(), 2);
         assert!(events[0].contains("OLÁ") && events[1].contains("MUNDO"));
@@ -196,7 +199,7 @@ mod tests {
             ..Default::default()
         };
         let words = vec![w(0.0, 0.3, "um"), w(0.3, 0.6, "dois"), w(0.6, 0.9, "tres")];
-        let ass = build_ass(&words, &style, 1080, 1920, 5.0);
+        let ass = build_ass(&words, &style, 1080, 1920, 5.0, None);
         let style_line = ass.lines().find(|l| l.starts_with("Style:")).unwrap();
         let f: Vec<&str> = style_line.split(',').collect();
         assert_eq!(f[7], "-1"); // negrito
@@ -206,5 +209,14 @@ mod tests {
         let first = ass.lines().find(|l| l.starts_with("Dialogue:")).unwrap();
         // Na 1ª palavra, as duas seguintes estão em cinza (ainda não faladas).
         assert_eq!(first.matches("&H009A9A9A").count(), 2);
+    }
+
+    #[test]
+    fn gameplay_caption_sits_on_divider() {
+        let style = CaptionStyle::default();
+        let ass = build_ass(&[w(0.0, 0.3, "oi")], &style, 1080, 1920, 5.0, Some(730));
+        let f: Vec<String> = ass.lines().find(|l| l.starts_with("Style:")).unwrap().split(',').map(String::from).collect();
+        assert_eq!(f[18], "8"); // alinhado pelo topo
+        assert_eq!(f[21], (730 - (82.0f64 * 0.62) as u32).to_string());
     }
 }

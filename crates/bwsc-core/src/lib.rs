@@ -15,6 +15,7 @@ pub mod clips;
 pub mod config;
 pub mod download;
 pub mod face;
+pub mod facecam;
 pub mod installer;
 pub mod llm;
 pub mod local_ai;

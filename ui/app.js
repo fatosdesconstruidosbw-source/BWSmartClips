@@ -143,7 +143,100 @@ document.querySelectorAll(".cap-tab").forEach((t) => (t.onclick = () => {
 function setReframe(v) {
   $("opt-reframe").value = v;
   document.querySelectorAll(".layout").forEach((l) => l.classList.toggle("active", l.dataset.value === v));
+  $("gameplay-opts").classList.toggle("hidden", v !== "gameplay");
 }
+
+// ---- layout Gameplay: tamanho e posição da webcam
+let gpFacecam = null; // retângulo normalizado {x,y,w,h} ou null (automático)
+
+function updateCamUi() {
+  $("cam-ratio-label").textContent = `${$("opt-cam-ratio").value}%`;
+  const manual = !!gpFacecam;
+  $("cam-pos-text").innerHTML = manual
+    ? `<span class="on">● Webcam marcada à mão</span> (vale para todos os cortes)`
+    : "Webcam: detectada automaticamente em cada corte";
+  $("btn-auto-cam").classList.toggle("hidden", !manual);
+}
+$("opt-cam-ratio").addEventListener("input", updateCamUi);
+$("btn-auto-cam").onclick = () => { gpFacecam = null; updateCamUi(); };
+
+let fcRect = null;
+async function openFacecamModal() {
+  const source = $("source").value.trim();
+  if (!source) return toast("Escolha o vídeo primeiro (link ou arquivo).");
+  $("facecam-modal").classList.remove("hidden");
+  $("fc-loading").classList.remove("hidden");
+  $("fc-loading").textContent = "Lendo o vídeo e procurando a webcam…";
+  $("fc-box").classList.add("hidden");
+  try {
+    const r = await invoke("facecam_preview", { source });
+    $("fc-img").src = fileSrc(r.image);
+    fcAuto = r.detected;
+    fcRect = gpFacecam || r.detected;
+    $("fc-hint").textContent = r.detected
+      ? "Esta é a webcam que o app encontrou. Se estiver errada, arraste para desenhar outra."
+      : "Não encontrei a webcam automaticamente. Arraste para desenhar um retângulo em volta dela.";
+    $("fc-loading").classList.add("hidden");
+    drawFcBox();
+  } catch (e) {
+    $("fc-loading").textContent = String(e);
+  }
+}
+let fcAuto = null;
+
+function drawFcBox() {
+  const b = $("fc-box");
+  if (!fcRect) return b.classList.add("hidden");
+  b.classList.remove("hidden");
+  Object.assign(b.style, { left: `${fcRect.x * 100}%`, top: `${fcRect.y * 100}%`, width: `${fcRect.w * 100}%`, height: `${fcRect.h * 100}%` });
+}
+
+(() => {
+  const stage = $("fc-stage");
+  let drag = null;
+  const pos = (e) => {
+    const r = $("fc-img").getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+  };
+  stage.addEventListener("mousedown", (e) => {
+    if (!$("fc-loading").classList.contains("hidden")) return;
+    const p = pos(e);
+    const inside = fcRect && p.x > fcRect.x && p.x < fcRect.x + fcRect.w && p.y > fcRect.y && p.y < fcRect.y + fcRect.h;
+    drag = inside ? { mode: "move", p, start: { ...fcRect } } : { mode: "draw", p };
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const p = pos(e);
+    if (drag.mode === "move") {
+      const s = drag.start;
+      fcRect = { ...s, x: Math.min(1 - s.w, Math.max(0, s.x + p.x - drag.p.x)), y: Math.min(1 - s.h, Math.max(0, s.y + p.y - drag.p.y)) };
+    } else {
+      fcRect = { x: Math.min(p.x, drag.p.x), y: Math.min(p.y, drag.p.y), w: Math.abs(p.x - drag.p.x), h: Math.abs(p.y - drag.p.y) };
+    }
+    drawFcBox();
+  });
+  window.addEventListener("mouseup", () => {
+    if (drag && fcRect && (fcRect.w < 0.03 || fcRect.h < 0.03)) fcRect = drag.start || null;
+    drag = null;
+    drawFcBox();
+  });
+})();
+
+$("btn-mark-cam").onclick = openFacecamModal;
+$("fc-detect").onclick = () => {
+  gpFacecam = null;
+  $("facecam-modal").classList.add("hidden");
+  updateCamUi();
+  toast(fcAuto ? "Usando a detecção automática em cada corte" : "Detecção automática ativada (se não achar a webcam, o corte usa Preencher)");
+};
+$("fc-save").onclick = () => {
+  if (!fcRect) return toast("Desenhe o retângulo em volta da webcam.");
+  gpFacecam = { ...fcRect };
+  $("facecam-modal").classList.add("hidden");
+  updateCamUi();
+  toast("Posição da webcam salva");
+};
 document.querySelectorAll(".layout").forEach((l) => (l.onclick = () => setReframe(l.dataset.value)));
 
 // Atalhos dos "chips" de recursos.
@@ -160,6 +253,9 @@ function fillOptions(o) {
   $("opt-focus").value = o.focus;
   $("opt-reanalyze").checked = false;
   setReframe(o.reframe);
+  $("opt-cam-ratio").value = Math.round((o.cam_ratio || 0.38) * 100);
+  gpFacecam = o.facecam || null;
+  updateCamUi();
   capState = { ...o.captions };
   if (!capState.enabled) capState.preset = "none";
   if (!capState.preset) capState.preset = "custom";
@@ -178,6 +274,8 @@ function readOptions() {
     reframe: $("opt-reframe").value,
     focus: $("opt-focus").value.trim(),
     reanalyze: $("opt-reanalyze").checked,
+    cam_ratio: parseInt($("opt-cam-ratio").value, 10) / 100,
+    facecam: gpFacecam,
     captions: { ...base.captions, ...capState },
   };
 }
@@ -680,7 +778,7 @@ const TOUR = [
   { el: "#sec-clips .panel", title: "Diga o que você quer",
     text: "Escolha <b>quantos cortes</b> quer e a <b>duração</b> de cada um. No campo de foco, peça algo específico, como <i>momentos engraçados</i> ou <i>dicas práticas</i>, e a IA prioriza isso." },
   { el: "#sec-reframe", title: "Formato vertical",
-    text: "<b>Seguir rosto</b> mantém quem está falando no centro do vídeo 9:16. Também há <b>Preencher</b> (corta o centro), <b>Fundo desfocado</b> (o vídeo inteiro no meio) e <b>Original</b>." },
+    text: "<b>Seguir rosto</b> mantém quem está falando no centro do vídeo 9:16. Para lives de jogos, use <b>Gameplay</b>: o app acha a webcam do streamer e coloca ela em cima, com o jogo embaixo. Também há <b>Preencher</b>, <b>Fundo desfocado</b> e <b>Original</b>." },
   { el: "#sec-captions", title: "Legendas animadas",
     text: "Escolha um <b>estilo</b> pronto e veja a prévia no celular. Nas abas <b>Fonte</b> e <b>Efeitos</b> você ajusta cores, tamanho, posição e quantas palavras aparecem por vez." },
   { el: "#btn-start", title: "Gere os cortes",

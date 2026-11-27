@@ -23,13 +23,21 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": {
+          "allow": [
+            "**"
+          ],
+          "requireLiteralLeadingDot": false
+        }
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "category": "Video",
     "shortDescription": "Cortes virais com IA, estilo Opus Clip",
     "longDescription": "Transforma vídeos longos em cortes verticais com legendas animadas e rastreamento de rosto, escolhidos por IA.",

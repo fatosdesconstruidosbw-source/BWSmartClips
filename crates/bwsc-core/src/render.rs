@@ -9,6 +9,7 @@ use anyhow::{bail, Context, Result};
 use crate::captions::{build_ass, EMBEDDED_FONT, EMBEDDED_FONT_FILE};
 use crate::config::{CaptionStyle, ReframeMode};
 use crate::face;
+use crate::facecam::{self, Facecam};
 use crate::media::MediaInfo;
 use crate::process::{command, drain_stderr, kill, run_lines, Cancel, Cancelled, Stream};
 use crate::transcript::Word;
@@ -30,6 +31,10 @@ pub struct RenderJob<'a> {
     pub output_height: u32,
     pub x264_preset: &'a str,
     pub x264_crf: u32,
+    /// Layout Gameplay: fração da altura para a webcam.
+    pub cam_ratio: f64,
+    /// Layout Gameplay: webcam marcada à mão (senão, detecta neste corte).
+    pub facecam: Option<crate::facecam::NormRect>,
     /// Pasta temporária deste corte.
     pub work_dir: &'a Path,
     pub output: &'a Path,
@@ -80,7 +85,33 @@ pub fn render(job: &RenderJob, cancel: &Cancel, on_progress: &mut dyn FnMut(f32,
     std::fs::create_dir_all(job.work_dir)?;
     let g = geometry(job.info, job.reframe, job.output_height);
     let duration = job.end - job.start;
-    let subtitle_filter = prepare_captions(job, &g, duration)?;
+
+    if job.reframe == ReframeMode::Gameplay {
+        on_progress(0.0, "Procurando a webcam…");
+        let cam = match job.facecam {
+            Some(rect) => Some(Facecam { rect: rect.clamp(), face_x: rect.x + rect.w / 2.0, face_y: rect.y + rect.h * 0.45, framed: true }),
+            None => facecam::detect_in_video(job.ffmpeg, job.input, job.info.width, job.info.height, job.start, duration, cancel)?,
+        };
+        match cam {
+            Some(cam) => {
+                let plan = gameplay_plan(&g, &cam, job.cam_ratio);
+                let subs = prepare_captions(job, &g, duration, Some(plan.top_h))?;
+                return render_filter(job, &g, ReframeMode::Gameplay, Some(&plan), subs.as_deref(), cancel, &mut |p| {
+                    on_progress(0.1 + p * 0.9, "Renderizando (gameplay)…")
+                });
+            }
+            None => {
+                // Trecho sem webcam: corta o centro, como em "Preencher".
+                on_progress(0.1, "Webcam não encontrada neste corte — usando Preencher");
+                let subs = prepare_captions(job, &g, duration, None)?;
+                return render_filter(job, &g, ReframeMode::Center, None, subs.as_deref(), cancel, &mut |p| {
+                    on_progress(0.1 + p * 0.9, "Renderizando…")
+                });
+            }
+        }
+    }
+
+    let subtitle_filter = prepare_captions(job, &g, duration, None)?;
 
     let tracked = job.reframe == ReframeMode::Face && g.needs_crop;
     if tracked {
@@ -102,12 +133,12 @@ pub fn render(job: &RenderJob, cancel: &Cancel, on_progress: &mut dyn FnMut(f32,
             on_progress(0.3 + p * 0.7, "Renderizando…")
         })
     } else {
-        render_filter(job, &g, subtitle_filter.as_deref(), cancel, &mut |p| on_progress(p, "Renderizando…"))
+        render_filter(job, &g, job.reframe, None, subtitle_filter.as_deref(), cancel, &mut |p| on_progress(p, "Renderizando…"))
     }
 }
 
 /// Grava `captions.ass` e a fonte na pasta do corte. Devolve o filtro do ffmpeg.
-fn prepare_captions(job: &RenderJob, g: &Geometry, duration: f64) -> Result<Option<String>> {
+fn prepare_captions(job: &RenderJob, g: &Geometry, duration: f64, divider: Option<u32>) -> Result<Option<String>> {
     if !job.captions.enabled || job.words.is_empty() {
         return Ok(None);
     }
@@ -117,7 +148,7 @@ fn prepare_captions(job: &RenderJob, g: &Geometry, duration: f64) -> Result<Opti
     if !font_path.exists() {
         std::fs::write(&font_path, EMBEDDED_FONT)?;
     }
-    let ass = build_ass(job.words, job.captions, g.out_w, g.out_h, duration);
+    let ass = build_ass(job.words, job.captions, g.out_w, g.out_h, duration, divider);
     std::fs::write(job.work_dir.join("captions.ass"), ass)?;
     // Caminhos relativos (o ffmpeg roda dentro de work_dir) evitam problemas
     // de escape com "C:\" no filtro de legendas no Windows.
@@ -138,10 +169,47 @@ fn absolute(p: &Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-/// Caminho só com filtros do ffmpeg (centro, desfoque, original ou vídeo já vertical).
+/// Recortes do layout Gameplay (em pixels da resolução de processamento).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GameplayPlan {
+    /// Recorte da webcam: x, y, largura, altura.
+    pub cam: (u32, u32, u32, u32),
+    /// Recorte do jogo: x, y, largura, altura.
+    pub game: (u32, u32, u32, u32),
+    /// Altura da webcam no vídeo final (o jogo ocupa o resto).
+    pub top_h: u32,
+}
+
+pub fn gameplay_plan(g: &Geometry, cam: &Facecam, ratio: f64) -> GameplayPlan {
+    let (pw, ph, ow, oh) = (g.proc_w as f64, g.proc_h as f64, g.out_w as f64, g.out_h as f64);
+    let top_h = even(oh * ratio.clamp(0.25, 0.55));
+    let bot_h = g.out_h - top_h;
+
+    // Webcam: ajusta a caixa à proporção do espaço de cima, sem sair da caixa.
+    let r = cam.rect.clamp();
+    let (bx, by, bw, bh) = (r.x * pw, r.y * ph, (r.w * pw).max(4.0), (r.h * ph).max(4.0));
+    let target = ow / top_h as f64;
+    let (cw, ch) = if bw / bh > target { (bh * target, bh) } else { (bw, bw / target) };
+    let cx = (cam.face_x * pw - cw / 2.0).clamp(bx, bx + bw - cw);
+    let cy = (cam.face_y * ph - ch * 0.45).clamp(by, by + bh - ch);
+    let (cw, ch) = (even(cw).min(g.proc_w), even(ch).min(g.proc_h));
+    let cx = (cx.round() as u32).min(g.proc_w - cw);
+    let cy = (cy.round() as u32).min(g.proc_h - ch);
+
+    // Jogo: recorte central na proporção do espaço de baixo.
+    let target = ow / bot_h as f64;
+    let (gw, gh) = if pw / ph > target { (even(ph * target), g.proc_h) } else { (g.proc_w, even(pw / target)) };
+    let (gw, gh) = (gw.min(g.proc_w), gh.min(g.proc_h));
+    GameplayPlan { cam: (cw, ch, cx, cy), game: (gw, gh, (g.proc_w - gw) / 2, (g.proc_h - gh) / 2), top_h }
+}
+
+/// Caminho só com filtros do ffmpeg (centro, desfoque, original, gameplay ou vídeo já vertical).
+#[allow(clippy::too_many_arguments)]
 fn render_filter(
     job: &RenderJob,
     g: &Geometry,
+    mode: ReframeMode,
+    gameplay: Option<&GameplayPlan>,
     subs: Option<&str>,
     cancel: &Cancel,
     on_progress: &mut dyn FnMut(f32),
@@ -149,7 +217,17 @@ fn render_filter(
     let fps = output_fps(job.info);
     let (pw, ph, cw, ow, oh) = (g.proc_w, g.proc_h, g.crop_w, g.out_w, g.out_h);
     let base = format!("fps={fps},scale={pw}:{ph}");
-    let mut chain = match job.reframe {
+    let mut chain = match mode {
+        ReframeMode::Gameplay if gameplay.is_some() => {
+            let p = gameplay.unwrap();
+            let (cw, ch, cx, cy) = p.cam;
+            let (gw, gh, gx, gy) = p.game;
+            let (top, bot) = (p.top_h, oh - p.top_h);
+            format!(
+                "[0:v]{base},split[a][b];[a]crop={cw}:{ch}:{cx}:{cy},scale={ow}:{top}:flags=lanczos[top];\
+                 [b]crop={gw}:{gh}:{gx}:{gy},scale={ow}:{bot}:flags=lanczos[bot];[top][bot]vstack"
+            )
+        }
         ReframeMode::Original => format!("[0:v]{base}"),
         ReframeMode::Blur => format!(
             "[0:v]{base},split[a][b];[a]scale={ow}:{oh}:force_original_aspect_ratio=increase,crop={ow}:{oh},boxblur=24:3,eq=brightness=-0.08[bg];\
@@ -322,6 +400,32 @@ mod tests {
         let g = geometry(&info(1080, 1920), ReframeMode::Face, 1280);
         assert!(!g.needs_crop);
         assert_eq!((g.out_w, g.out_h), (720, 1280));
+    }
+
+    #[test]
+    fn gameplay_plan_fits_webcam_and_game() {
+        let info = info(1920, 1080);
+        let g = geometry(&info, ReframeMode::Gameplay, 1920);
+        // Webcam 16:9 no canto superior direito, rosto no meio dela.
+        let cam = Facecam {
+            rect: crate::facecam::NormRect { x: 0.78, y: 0.19, w: 0.21, h: 0.23 },
+            face_x: 0.885,
+            face_y: 0.29,
+            framed: true,
+        };
+        let p = gameplay_plan(&g, &cam, 0.38);
+        assert_eq!(p.top_h, 730);
+        let (cw, ch, cx, cy) = p.cam;
+        // Proporção do recorte da webcam ≈ proporção do espaço de cima (1080:730).
+        assert!(((cw as f64 / ch as f64) - 1080.0 / 730.0).abs() < 0.03, "{cw}x{ch}");
+        // Dentro da caixa da webcam.
+        assert!(cx as f64 >= 0.78 * 1920.0 - 1.0 && (cx + cw) as f64 <= 0.99 * 1920.0 + 1.0);
+        assert!(cy as f64 >= 0.19 * 1080.0 - 1.0 && (cy + ch) as f64 <= 0.42 * 1080.0 + 1.0);
+        // Jogo: altura total, proporção do espaço de baixo, centralizado.
+        let (gw, gh, gx, _) = p.game;
+        assert_eq!(gh, 1080);
+        assert!(((gw as f64 / gh as f64) - 1080.0 / 1190.0).abs() < 0.01);
+        assert_eq!(gx, (1920 - gw) / 2);
     }
 
     #[test]

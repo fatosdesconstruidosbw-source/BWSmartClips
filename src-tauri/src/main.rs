@@ -40,7 +40,8 @@ fn get_settings(state: State<AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn save_settings(state: State<AppState>, settings: Settings) -> CmdResult<()> {
+fn save_settings(state: State<AppState>, mut settings: Settings) -> CmdResult<()> {
+    settings.remember_output();
     settings.save(&Settings::default_path()).map_err(err)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
@@ -438,18 +439,34 @@ fn cancel_job(state: State<AppState>, id: String) {
 /// Lista os projetos já gerados (lendo `cortes.json` de cada pasta).
 #[tauri::command]
 fn list_projects(state: State<AppState>) -> Vec<JobResult> {
-    let dir = PathBuf::from(&state.settings.lock().unwrap().output_dir);
-    let mut out: Vec<JobResult> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| std::fs::read_to_string(e.path().join("cortes.json")).ok())
-                .filter_map(|t| serde_json::from_str::<JobResult>(&t).ok())
-                .collect()
-        })
-        .unwrap_or_default();
-    out.sort_by(|a, b| b.project_dir.cmp(&a.project_dir));
+    let dirs = state.settings.lock().unwrap().project_dirs();
+    let mut out: Vec<JobResult> = dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|rd| rd.filter_map(|e| e.ok()))
+        .filter_map(|e| std::fs::read_to_string(e.path().join("cortes.json")).ok())
+        .filter_map(|t| serde_json::from_str::<JobResult>(&t).ok())
+        .collect();
+    // As pastas começam com data e hora: ordena pelo nome, mais novas primeiro.
+    let name = |r: &JobResult| r.project_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    out.sort_by_key(|r| std::cmp::Reverse(name(r)));
+    out.dedup_by(|a, b| a.project_dir == b.project_dir);
     out.truncate(30);
     out
+}
+
+/// Abre a pasta onde os cortes são salvos (criando-a se ainda não existir).
+#[tauri::command]
+fn open_output_dir(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    let dir = state.settings.lock().unwrap().output_base();
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(err)
+}
+
+/// Pasta que o app usa quando o usuário não escolhe uma.
+#[tauri::command]
+fn default_output_dir() -> String {
+    bwsc_core::config::default_output_dir().to_string_lossy().into_owned()
 }
 
 fn main() {
@@ -484,7 +501,9 @@ fn main() {
             start_job,
             cancel_job,
             log_path,
-            list_projects
+            list_projects,
+            default_output_dir,
+            open_output_dir
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o BWSmartClips");

@@ -166,8 +166,10 @@ impl Default for ClipOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Pasta onde os projetos/cortes são salvos.
+    /// Pasta onde os projetos/cortes são salvos (vazio = padrão do app).
     pub output_dir: String,
+    /// Pastas de saída já usadas, para a lista de Projetos continuar achando cortes antigos.
+    pub output_history: Vec<String>,
 
     // Ferramentas externas (vazio = procurar automaticamente).
     pub ffmpeg_path: String,
@@ -230,7 +232,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            output_dir: default_output_dir().to_string_lossy().into_owned(),
+            output_dir: String::new(),
+            output_history: Vec::new(),
             ffmpeg_path: String::new(),
             ffprobe_path: String::new(),
             ytdlp_path: String::new(),
@@ -294,7 +297,7 @@ pub fn cache_dir() -> PathBuf {
     app_data_dir().join("cache")
 }
 
-fn default_output_dir() -> PathBuf {
+pub fn default_output_dir() -> PathBuf {
     directories::UserDirs::new()
         .and_then(|u| u.video_dir().map(Path::to_path_buf))
         .unwrap_or_else(app_data_dir)
@@ -302,6 +305,39 @@ fn default_output_dir() -> PathBuf {
 }
 
 impl Settings {
+    /// Pasta onde os cortes serão salvos: a escolhida pelo usuário ou a padrão.
+    pub fn output_base(&self) -> PathBuf {
+        let s = self.output_dir.trim();
+        if s.is_empty() { default_output_dir() } else { PathBuf::from(s) }
+    }
+
+    /// Todas as pastas onde pode haver projetos (atual, padrão e já usadas), sem repetir.
+    pub fn project_dirs(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        let all = std::iter::once(self.output_base())
+            .chain(std::iter::once(default_output_dir()))
+            .chain(self.output_history.iter().filter(|s| !s.trim().is_empty()).map(PathBuf::from));
+        for d in all {
+            if !out.iter().any(|o| o == &d) {
+                out.push(d);
+            }
+        }
+        out
+    }
+
+    /// Lembra a pasta atual na lista de pastas usadas. Devolve `true` se mudou algo.
+    pub fn remember_output(&mut self) -> bool {
+        let cur = self.output_dir.trim().to_string();
+        if cur.is_empty() || self.output_history.iter().any(|h| h == &cur) {
+            return false;
+        }
+        self.output_history.push(cur);
+        if self.output_history.len() > 20 {
+            self.output_history.remove(0);
+        }
+        true
+    }
+
     pub fn default_path() -> PathBuf {
         app_data_dir().join("settings.json")
     }
@@ -344,5 +380,24 @@ mod tests {
         assert_eq!(s.transcription, TranscriptionEngine::Local);
         assert!(s.llm_provider.is_local());
         assert!(s.whisper_vad && s.use_cache && !s.setup_done);
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn empty_output_uses_default_and_history_is_deduped() {
+        let mut s = Settings::default();
+        assert_eq!(s.output_base(), default_output_dir());
+        assert!(!s.remember_output());
+        s.output_dir = "/tmp/meus-cortes".into();
+        assert!(s.remember_output());
+        assert!(!s.remember_output());
+        let dirs = s.project_dirs();
+        assert_eq!(dirs[0], PathBuf::from("/tmp/meus-cortes"));
+        assert!(dirs.contains(&default_output_dir()));
+        assert_eq!(dirs.len(), 2);
     }
 }

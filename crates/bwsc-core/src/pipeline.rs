@@ -141,7 +141,7 @@ pub fn run_job(
     let tools = Tools::locate(settings);
     let ffmpeg = tools.ffmpeg()?.to_path_buf();
     let ffprobe = tools.ffprobe()?.to_path_buf();
-    let base = PathBuf::from(&settings.output_dir);
+    let base = settings.output_base();
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     // Downloads são sempre reaproveitados (se o cache estiver ligado);
     // transcrição e análise são refeitas quando o usuário pede "refazer do zero".

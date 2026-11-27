@@ -211,7 +211,7 @@ fn manual(
     let ffmpeg = tools.ffmpeg()?.to_path_buf();
     let info = media::probe(tools.ffprobe()?, file, cancel)?;
     let title = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let project_dir = PathBuf::from(&settings.output_dir).join(format!("manual-{}", slug(&title, 40)));
+    let project_dir = settings.output_base().join(format!("manual-{}", slug(&title, 40)));
     let work = project_dir.join(".work");
     std::fs::create_dir_all(&work)?;
 

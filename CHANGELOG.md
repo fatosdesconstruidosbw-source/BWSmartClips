@@ -5,6 +5,13 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+### Novidades
+- **Escolha onde salvar os cortes** direto no painel "Cortes": "Escolher pasta…" ou deixar na pasta padrão do app
+  (Vídeos\BWSmartClips). Clique no caminho para abrir a pasta. A lista de Projetos continua mostrando os cortes
+  salvos em pastas usadas antes.
+- Ao clicar em **Gerar cortes**, a tela rola sozinha até o andamento da renderização.
+- Botão flutuante **voltar ao topo** no canto da tela.
+
 ## [1.2.0] - 2026-11-27
 
 ### Novidades

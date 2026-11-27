@@ -79,6 +79,18 @@
         <label class="block"><span>O que a IA deve procurar? <span class="muted">(opcional)</span></span>
           <input id="opt-focus" type="text" placeholder="ex.: momentos engraçados, dicas práticas, histórias pessoais…" />
         </label>
+        <div class="block out-block">
+          <span>Salvar cortes em</span>
+          <div class="out-row">
+            <button class="out-path" id="out-path" title="Abrir a pasta">
+              <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              <span class="out-text" id="out-text"></span>
+              <span class="out-tag" id="out-tag">Padrão</span>
+            </button>
+            <button class="secondary" id="btn-out-pick">Escolher pasta…</button>
+          </div>
+          <button class="link out-reset hidden" id="btn-out-default">Voltar para a pasta padrão</button>
+        </div>
         <div class="panel-foot">
           <label class="check"><input id="opt-reanalyze" type="checkbox" /> Refazer do zero (ignorar cache)</label>
           <button class="link" id="btn-save-defaults">Salvar como padrão</button>
@@ -202,6 +214,10 @@
       <div class="clips" id="clips"></div>
     </section>
   </main>
+
+  <button class="to-top" id="btn-top" title="Voltar ao topo" aria-label="Voltar ao topo">
+    <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
 
   <!-- Projetos -->
   <div class="modal hidden" id="projects-modal">
@@ -352,7 +368,7 @@
       </div>
 
       <div class="tab-body hidden" id="tab-output">
-        <div class="path-row"><label>Pasta dos projetos <input id="s-output" type="text" /></label><button class="secondary" id="btn-pick-output">…</button></div>
+        <div class="path-row"><label>Pasta dos projetos <input id="s-output" type="text" placeholder="Padrão do app" /></label><button class="secondary" id="btn-pick-output">…</button></div>
         <div class="grid two">
           <label>Resolução vertical
             <select id="s-height">

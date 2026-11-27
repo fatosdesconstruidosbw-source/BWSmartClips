@@ -534,11 +534,49 @@ $("btn-pick-output").onclick = async () => {
   if (p) $("s-output").value = p;
 };
 
+// Pasta onde os cortes são salvos (vazio = padrão do app).
+let defaultOutput = "";
+function updateOutputUi() {
+  let custom = (settings.output_dir || "").trim();
+  if (custom === defaultOutput) custom = "";
+  const shown = custom || defaultOutput;
+  $("out-text").textContent = shown;
+  $("out-path").title = shown + "\n(clique para abrir)";
+  $("out-tag").textContent = custom ? "Escolhida" : "Padrão";
+  $("out-tag").classList.toggle("custom", !!custom);
+  $("btn-out-default").classList.toggle("hidden", !custom);
+}
+async function setOutputDir(dir) {
+  settings.output_dir = dir;
+  try {
+    await invoke("save_settings", { settings });
+    settings = await invoke("get_settings");
+  } catch (e) {
+    return toast("Não consegui salvar a pasta: " + e, 5000);
+  }
+  updateOutputUi();
+  toast(dir ? "Os próximos cortes vão para a pasta escolhida" : "Voltando para a pasta padrão do app");
+}
+$("btn-out-pick").onclick = async () => {
+  const p = await invoke("pick_folder");
+  if (p) setOutputDir(p);
+};
+$("btn-out-default").onclick = () => setOutputDir("");
+$("out-path").onclick = () => invoke("open_output_dir").catch((e) => toast("Não consegui abrir a pasta: " + e, 5000));
+
+// Botão flutuante "voltar ao topo".
+const toTop = $("btn-top");
+const syncTop = () => toTop.classList.toggle("show", window.scrollY > 400);
+window.addEventListener("scroll", syncTop, { passive: true });
+toTop.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+
 $("btn-settings").onclick = () => openSettings();
 $("btn-save-settings").onclick = async () => {
   try {
     settings = readSettings();
     await invoke("save_settings", { settings });
+    settings = await invoke("get_settings");
+    updateOutputUi();
     $("settings-status").textContent = "Salvo ✔";
     updateModePill();
     setTimeout(() => ($("settings-status").textContent = ""), 2000);
@@ -590,6 +628,7 @@ $("btn-start").onclick = async () => {
     $("results").classList.add("hidden");
     setStage(isUrl ? "download" : "probe", isUrl);
     currentJob = { id: currentJob, isUrl };
+    setTimeout(() => $("progress-card").scrollIntoView({ behavior: "smooth", block: "start" }), 60);
   } catch (e) {
     toast(String(e), 5000);
   }
@@ -868,6 +907,9 @@ function maybeFirstTour() {
 (async function init() {
   settings = await invoke("get_settings");
   fillOptions(settings.defaults);
+  defaultOutput = await invoke("default_output_dir");
+  updateOutputUi();
+  syncTop();
   updateModePill();
   await refreshTools();
   if (!settings.setup_done) {

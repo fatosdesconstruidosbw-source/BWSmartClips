@@ -165,6 +165,10 @@ pub struct Settings {
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub ytdlp_path: String,
+    /// Arquivo cookies.txt exportado do navegador (para o YouTube não bloquear).
+    pub youtube_cookies_file: String,
+    /// Navegador de onde o yt-dlp lê os cookies: "", "firefox", "edge", "chrome", "brave"…
+    pub cookies_browser: String,
     pub whisper_path: String,
     /// Arquivo do modelo ggml do whisper.cpp (vazio = procurar na pasta de modelos).
     pub whisper_model: String,
@@ -222,6 +226,8 @@ impl Default for Settings {
             ffmpeg_path: String::new(),
             ffprobe_path: String::new(),
             ytdlp_path: String::new(),
+            youtube_cookies_file: String::new(),
+            cookies_browser: String::new(),
             whisper_path: String::new(),
             whisper_model: String::new(),
             whisper_threads: 0,

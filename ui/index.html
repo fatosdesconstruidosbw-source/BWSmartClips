@@ -288,6 +288,23 @@
           <p class="muted small" id="install-msg"></p>
         </fieldset>
         <fieldset>
+          <legend>YouTube</legend>
+          <p class="muted small" style="margin:4px 0 0">Se o YouTube pedir para "confirmar que você não é um robô", o download precisa dos cookies
+            de um navegador em que você está logado no YouTube.</p>
+          <div class="path-row"><label>Cookies do YouTube (cookies.txt) <input id="s-cookies" type="text" placeholder="exportado com a extensão &quot;Get cookies.txt LOCALLY&quot;" /></label><button class="secondary" data-pick="s-cookies" data-title="Escolha o arquivo cookies.txt">…</button></div>
+          <label class="block">Ou ler cookies do navegador
+            <select id="s-cookies-browser">
+              <option value="">Automático (tenta Firefox, Edge, Chrome…)</option>
+              <option value="firefox">Firefox (recomendado)</option>
+              <option value="edge">Microsoft Edge</option>
+              <option value="chrome">Google Chrome</option>
+              <option value="brave">Brave</option>
+              <option value="opera">Opera</option>
+            </select>
+          </label>
+          <p class="muted small">No Windows, Chrome e Edge costumam bloquear a leitura dos cookies; nesse caso use o Firefox ou o arquivo cookies.txt.</p>
+        </fieldset>
+        <fieldset>
           <legend>Caminhos manuais <span class="muted">(deixe vazio para detectar)</span></legend>
           <div class="path-row"><label>ffmpeg <input id="s-ffmpeg" type="text" /></label><button class="secondary" data-pick="s-ffmpeg">…</button></div>
           <div class="path-row"><label>ffprobe <input id="s-ffprobe" type="text" /></label><button class="secondary" data-pick="s-ffprobe">…</button></div>

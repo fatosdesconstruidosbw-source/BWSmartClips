@@ -368,7 +368,7 @@ const S_FIELDS = {
   "s-openai-url": "openai_base_url", "s-engine": "transcription", "s-whisper-model": "whisper_model",
   "s-whisper-threads": "whisper_threads", "s-openai-tmodel": "openai_transcription_model",
   "s-ffmpeg": "ffmpeg_path", "s-ffprobe": "ffprobe_path", "s-ytdlp": "ytdlp_path", "s-whisper": "whisper_path",
-  "s-llama": "llama_path", "s-output": "output_dir", "s-height": "output_height",
+  "s-llama": "llama_path", "s-cookies": "youtube_cookies_file", "s-cookies-browser": "cookies_browser", "s-output": "output_dir", "s-height": "output_height",
   "s-preset": "x264_preset", "s-crf": "x264_crf",
 };
 const S_CHECKS = { "s-vad": "whisper_vad", "s-cache": "use_cache" };
@@ -426,7 +426,7 @@ document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => selectTab(t.
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => b.closest(".modal").classList.add("hidden")));
 document.querySelectorAll(".modal").forEach((m) => m.addEventListener("click", (e) => { if (e.target === m) m.classList.add("hidden"); }));
 document.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = async () => {
-  const p = await invoke("pick_file", { title: "Escolha o executável" });
+  const p = await invoke("pick_file", { title: b.dataset.title || "Escolha o executável" });
   if (p) $(b.dataset.pick).value = p;
 }));
 $("btn-pick-output").onclick = async () => {

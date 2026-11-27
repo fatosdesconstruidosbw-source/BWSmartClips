@@ -161,8 +161,14 @@ pub fn run_job(
                 let ytdlp = tools.ytdlp()?.to_path_buf();
                 let dir = base.join(format!("{stamp}-download"));
                 report(on_progress, Stage::Download, 0.0, "Baixando vídeo…");
-                let d = download::download(&ytdlp, &ffmpeg, url, &dir, cancel, |p, _| {
-                    report(on_progress, Stage::Download, p, format!("Baixando vídeo… {:.0}%", p * 100.0))
+                let cookies = settings.youtube_cookies_file.trim();
+                let auth = download::Auth {
+                    cookies_file: (!cookies.is_empty()).then(|| PathBuf::from(cookies)).filter(|p| p.is_file()),
+                    browser: Some(settings.cookies_browser.trim().to_string()).filter(|b| !b.is_empty()),
+                };
+                let d = download::download(&ytdlp, &ffmpeg, url, &dir, &auth, cancel, |p, m| {
+                    let msg = if m.starts_with("YouTube pediu") { m.to_string() } else { format!("Baixando vídeo… {:.0}%", p * 100.0) };
+                    report(on_progress, Stage::Download, p, msg)
                 })?;
                 let final_dir = base.join(format!("{stamp}-{}", slug(&d.title, 40)));
                 let (file, dir) = match std::fs::rename(&dir, &final_dir) {

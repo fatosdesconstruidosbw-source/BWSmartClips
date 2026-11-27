@@ -80,13 +80,22 @@ pub fn build_ass(words: &[Word], style: &CaptionStyle, width: u32, height: u32, 
     let primary = ass_color(&style.color);
     let highlight = ass_color(&style.highlight_color);
     let outline_c = ass_color(&style.outline_color);
+    let upcoming = (!style.upcoming_color.trim().is_empty()).then(|| ass_color(&style.upcoming_color));
+    let boxed = !style.box_color.trim().is_empty();
+    // Com caixa: BorderStyle 3 (caixa opaca); o "contorno" vira o respiro da caixa.
+    let (border_style, back, outline_c, shadow) = if boxed {
+        (3, ass_color(&style.box_color), ass_color(&style.box_color), 0.0)
+    } else {
+        (1, "&H80000000".to_string(), outline_c, shadow)
+    };
+    let italic = if style.italic { -1 } else { 0 };
 
     let mut s = String::new();
     let _ = writeln!(s, "[Script Info]\nScriptType: v4.00+\nPlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\nScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n");
     let _ = writeln!(s, "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
     let _ = writeln!(
         s,
-        "Style: Default,{},{font_size},{primary},{primary},{outline_c},&H80000000,-1,0,0,0,100,100,0,0,1,{outline:.1},{shadow:.1},{alignment},{margin_h},{margin_h},{margin_v},1\n",
+        "Style: Default,{},{font_size},{primary},{primary},{outline_c},{back},-1,{italic},0,0,100,100,0,0,{border_style},{outline:.1},{shadow:.1},{alignment},{margin_h},{margin_h},{margin_v},1\n",
         style.font
     );
     let _ = writeln!(s, "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -121,6 +130,9 @@ pub fn build_ass(words: &[Word], style: &CaptionStyle, width: u32, height: u32, 
                     } else {
                         text.push_str(&format!("{{\\c{highlight}}}{word}{{\\c{primary}}}"));
                     }
+                } else if k > wi && upcoming.is_some() {
+                    let up = upcoming.as_deref().unwrap();
+                    text.push_str(&format!("{{\\c{up}}}{word}{{\\c{primary}}}"));
                 } else {
                     text.push_str(&word);
                 }
@@ -172,5 +184,27 @@ mod tests {
         assert!(!events[1].contains("{mundo}"));
         assert!(events[1].starts_with("Dialogue: 0,0:00:00.30,0:00:00.85"));
         assert!(ass.contains("PlayResY: 1920"));
+    }
+
+    #[test]
+    fn boxed_italic_with_upcoming_words() {
+        let style = CaptionStyle {
+            italic: true,
+            box_color: "#FFFFFF".into(),
+            upcoming_color: "#9A9A9A".into(),
+            color: "#111111".into(),
+            ..Default::default()
+        };
+        let words = vec![w(0.0, 0.3, "um"), w(0.3, 0.6, "dois"), w(0.6, 0.9, "tres")];
+        let ass = build_ass(&words, &style, 1080, 1920, 5.0);
+        let style_line = ass.lines().find(|l| l.starts_with("Style:")).unwrap();
+        let f: Vec<&str> = style_line.split(',').collect();
+        assert_eq!(f[7], "-1"); // negrito
+        assert_eq!(f[8], "-1"); // itálico
+        assert_eq!(f[15], "3"); // caixa opaca
+        assert_eq!(f[6], "&H00FFFFFF"); // cor da caixa
+        let first = ass.lines().find(|l| l.starts_with("Dialogue:")).unwrap();
+        // Na 1ª palavra, as duas seguintes estão em cinza (ainda não faladas).
+        assert_eq!(first.matches("&H009A9A9A").count(), 2);
     }
 }

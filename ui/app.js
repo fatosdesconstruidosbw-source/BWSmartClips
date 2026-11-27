@@ -31,25 +31,140 @@ function fmtTime(s) {
 
 // ------------------------------------------------------------- opções do trabalho
 
+// Estilos prontos de legenda. `box` = caixa atrás do texto; `up` = cor das palavras ainda não faladas.
+const PRESETS = [
+  { id: "none", name: "Sem legendas", enabled: false },
+  { id: "viral", name: "Viral", color: "#FFFFFF", hl: "#FFE600", outline: "#000000", upper: true, italic: false, pop: true },
+  { id: "karaoke", name: "Karaokê", color: "#FFFFFF", hl: "#22F04A", outline: "#000000", upper: true, italic: false, pop: false },
+  { id: "impacto", name: "Impacto", color: "#FFFFFF", hl: "#39FF14", outline: "#000000", upper: true, italic: true, pop: true },
+  { id: "caixa", name: "Caixa", color: "#111111", hl: "#111111", outline: "#FFFFFF", upper: false, italic: false, pop: false, box: "#FFFFFF", up: "#A3A3A3" },
+  { id: "neon", name: "Neon", color: "#FF4FD8", hl: "#FFFFFF", outline: "#2A0029", upper: true, italic: false, pop: true },
+  { id: "foco", name: "Foco", color: "#FFFFFF", hl: "#2EE6C5", outline: "#000000", upper: true, italic: false, pop: false, up: "#8E8E8E" },
+  { id: "classico", name: "Clássico", color: "#FFFFFF", hl: "#FFFFFF", outline: "#000000", upper: false, italic: false, pop: false },
+];
+const SAMPLE = ["como", "viralizar", "rápido"];
+let capState = {};
+
+function applyPreset(id) {
+  const p = PRESETS.find((x) => x.id === id);
+  if (!p) return;
+  capState.preset = id;
+  capState.enabled = p.enabled !== false;
+  if (p.enabled !== false) {
+    Object.assign(capState, {
+      color: p.color, highlight_color: p.hl, outline_color: p.outline, uppercase: p.upper,
+      italic: p.italic, pop: p.pop, box_color: p.box || "", upcoming_color: p.up || "",
+    });
+  }
+  syncCaptionInputs();
+  renderPresets();
+}
+
+function syncCaptionInputs() {
+  $("cap-enabled").checked = capState.enabled;
+  $("cap-color").value = capState.color;
+  $("cap-highlight").value = capState.highlight_color;
+  $("cap-outline-color").value = capState.outline_color;
+  $("cap-size").value = capState.font_size;
+  $("cap-words").value = capState.max_words;
+  $("cap-position").value = capState.position;
+  $("cap-upper").checked = capState.uppercase;
+  $("cap-italic").checked = capState.italic;
+  $("cap-pop").checked = capState.pop;
+}
+
+// Ajuste manual em Fonte/Efeitos: deixa de ser um estilo pronto.
+function readCaptionInputs() {
+  Object.assign(capState, {
+    enabled: $("cap-enabled").checked,
+    color: $("cap-color").value,
+    highlight_color: $("cap-highlight").value,
+    outline_color: $("cap-outline-color").value,
+    font_size: parseInt($("cap-size").value, 10) || capState.font_size,
+    max_words: parseInt($("cap-words").value, 10) || capState.max_words,
+    position: $("cap-position").value,
+    uppercase: $("cap-upper").checked,
+    italic: $("cap-italic").checked,
+    pop: $("cap-pop").checked,
+  });
+}
+["cap-color", "cap-highlight", "cap-outline-color", "cap-size", "cap-words", "cap-position", "cap-upper", "cap-italic", "cap-pop", "cap-enabled"]
+  .forEach((id) => $(id).addEventListener("input", () => {
+    readCaptionInputs();
+    if (capState.preset !== "none") capState.preset = "custom";
+    renderPresets();
+  }));
+
+/** HTML de uma frase de exemplo com a palavra `active` em destaque. */
+function sampleHtml(s, active) {
+  const style = (k) => {
+    let c = s.color;
+    if (k === active) c = s.highlight_color;
+    else if (k > active && s.upcoming_color) c = s.upcoming_color;
+    const pop = k === active && s.pop ? "transform:scale(1.12);margin:0 .32em;" : "";
+    const stroke = s.box_color ? "" : `-webkit-text-stroke:1.2px ${s.outline_color};paint-order:stroke fill;text-shadow:0 2px 0 ${s.outline_color};`;
+    return `color:${c};${pop}${stroke}${s.italic ? "font-style:italic;" : ""}`;
+  };
+  const words = SAMPLE.map((w, k) => `<span style="${style(k)}">${esc(s.uppercase ? w.toUpperCase() : w)}</span>`).join(" ");
+  return s.box_color
+    ? `<span class="line boxed" style="background:${s.box_color}">${words}</span>`
+    : `<span class="line">${words}</span>`;
+}
+
+function renderPresets() {
+  $("cap-presets").innerHTML = PRESETS.map((p) => {
+    const s = p.enabled === false ? null : { color: p.color, highlight_color: p.hl, outline_color: p.outline, uppercase: p.upper, italic: p.italic, pop: p.pop, box_color: p.box || "", upcoming_color: p.up || "" };
+    const pv = s ? sampleHtml(s, 1) : `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:none;stroke:#a1a1aa;stroke-width:2"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>`;
+    return `<button class="preset ${capState.preset === p.id ? "active" : ""}" data-preset="${p.id}"><div class="pv">${pv}</div><span class="nm">${p.name}</span></button>`;
+  }).join("") + (capState.preset === "custom" ? `<p class="muted small" style="text-align:center">Estilo personalizado (Fonte/Efeitos)</p>` : "");
+}
+$("cap-presets").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-preset]");
+  if (b) applyPreset(b.dataset.preset);
+});
+
+// Prévia animada no "celular".
+let stageWord = 0;
+function renderStage() {
+  const el = $("stage-caption");
+  el.className = `stage-caption pos-${capState.position || "bottom"}`;
+  el.style.fontSize = `${Math.round(17 * (capState.font_size || 82) / 82)}px`;
+  el.innerHTML = capState.enabled ? sampleHtml(capState, stageWord) : "";
+  stageWord = (stageWord + 1) % SAMPLE.length;
+}
+setInterval(renderStage, 650);
+
+document.querySelectorAll(".cap-tab").forEach((t) => (t.onclick = () => {
+  document.querySelectorAll(".cap-tab").forEach((x) => x.classList.toggle("active", x === t));
+  document.querySelectorAll(".cap-body").forEach((b) => b.classList.toggle("hidden", b.id !== t.dataset.cap));
+}));
+
+// Layouts de reenquadramento.
+function setReframe(v) {
+  $("opt-reframe").value = v;
+  document.querySelectorAll(".layout").forEach((l) => l.classList.toggle("active", l.dataset.value === v));
+}
+document.querySelectorAll(".layout").forEach((l) => (l.onclick = () => setReframe(l.dataset.value)));
+
+// Atalhos dos "chips" de recursos.
+document.querySelectorAll(".fchip").forEach((c) => (c.onclick = () => {
+  document.querySelectorAll(".fchip").forEach((x) => x.classList.toggle("active", x === c));
+  $(c.dataset.goto)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}));
+
 function fillOptions(o) {
   $("opt-count").value = o.clip_count;
   $("opt-min").value = o.min_duration;
   $("opt-max").value = o.max_duration;
   $("opt-lang").value = o.language;
-  $("opt-reframe").value = o.reframe;
   $("opt-focus").value = o.focus;
-  const c = o.captions;
-  $("cap-enabled").checked = c.enabled;
-  $("cap-color").value = c.color;
-  $("cap-highlight").value = c.highlight_color;
-  $("cap-outline-color").value = c.outline_color;
-  $("cap-size").value = c.font_size;
-  $("cap-words").value = c.max_words;
-  $("cap-position").value = c.position;
-  $("cap-upper").checked = c.uppercase;
-  $("cap-pop").checked = c.pop;
   $("opt-reanalyze").checked = false;
-  updateCaptionPreview();
+  setReframe(o.reframe);
+  capState = { ...o.captions };
+  if (!capState.enabled) capState.preset = "none";
+  if (!capState.preset) capState.preset = "custom";
+  syncCaptionInputs();
+  renderPresets();
 }
 
 function readOptions() {
@@ -63,35 +178,32 @@ function readOptions() {
     reframe: $("opt-reframe").value,
     focus: $("opt-focus").value.trim(),
     reanalyze: $("opt-reanalyze").checked,
-    captions: {
-      ...base.captions,
-      enabled: $("cap-enabled").checked,
-      color: $("cap-color").value,
-      highlight_color: $("cap-highlight").value,
-      outline_color: $("cap-outline-color").value,
-      font_size: parseInt($("cap-size").value, 10) || base.captions.font_size,
-      max_words: parseInt($("cap-words").value, 10) || base.captions.max_words,
-      position: $("cap-position").value,
-      uppercase: $("cap-upper").checked,
-      pop: $("cap-pop").checked,
-    },
+    captions: { ...base.captions, ...capState },
   };
 }
 
-function updateCaptionPreview() {
-  const p = $("cap-preview");
-  const upper = $("cap-upper").checked;
-  const words = ["isso", "aqui", "é"].map((w) => (upper ? w.toUpperCase() : w));
-  p.innerHTML = `<b>${words[0]}</b> <i>${words[1]}</i> <b>${words[2]}</b>`;
-  p.querySelectorAll("b").forEach((b) => (b.style.color = $("cap-color").value));
-  p.querySelector("i").style.color = $("cap-highlight").value;
-  p.style.webkitTextStrokeColor = $("cap-outline-color").value;
-  p.style.opacity = $("cap-enabled").checked ? 1 : 0.35;
+// Arrastar e soltar um vídeo na janela.
+const VIDEO_EXT = /\.(mp4|mov|mkv|webm|avi|m4v|flv|wmv|ts)$/i;
+listen("tauri://drag-enter", () => $("dropbar").classList.add("dragging"));
+listen("tauri://drag-leave", () => $("dropbar").classList.remove("dragging"));
+listen("tauri://drag-drop", (p) => {
+  $("dropbar").classList.remove("dragging");
+  const file = (p.paths || []).find((f) => VIDEO_EXT.test(f));
+  if (file) {
+    $("source").value = file;
+    toast("Vídeo pronto — clique em Gerar cortes");
+  } else if ((p.paths || []).length) {
+    toast("Solte um arquivo de vídeo (mp4, mov, mkv…)");
+  }
+});
+
+function updateModePill() {
+  const online = !["local", "ollama"].includes(settings.llm_provider) || settings.transcription !== "local";
+  const pill = $("mode-pill");
+  pill.textContent = online ? "● Usando API online" : "● 100% offline";
+  pill.classList.toggle("online", online);
 }
 
-["cap-color", "cap-highlight", "cap-outline-color", "cap-upper", "cap-enabled"].forEach((id) =>
-  $(id).addEventListener("input", updateCaptionPreview)
-);
 
 // ------------------------------------------------------------- ferramentas e modelos
 
@@ -328,6 +440,7 @@ $("btn-save-settings").onclick = async () => {
     settings = readSettings();
     await invoke("save_settings", { settings });
     $("settings-status").textContent = "Salvo ✔";
+    updateModePill();
     setTimeout(() => ($("settings-status").textContent = ""), 2000);
     await refreshTools();
   } catch (e) {
@@ -428,12 +541,12 @@ function showResults(project) {
   $("clips").innerHTML = project.clips
     .map((c, i) => {
       const dur = c.end - c.start;
-      const cls = c.score >= 80 ? "hot" : c.score >= 60 ? "mid" : "";
+      const cls = c.score >= 80 ? "" : c.score >= 60 ? "mid" : "low";
       const tags = (c.hashtags || []).join(" ");
       return `<article class="clip">
         <div class="video-wrap">
           <video src="${fileSrc(c.file)}" ${c.thumbnail ? `poster="${fileSrc(c.thumbnail)}"` : ""} controls preload="metadata"></video>
-          ${c.score > 0 ? `<span class="score ${cls}">🔥 ${Math.round(c.score)}</span>` : ""}
+          ${c.score > 0 ? `<span class="score ${cls}"><small>NOTA</small><b>${Math.round(c.score)}</b></span>` : ""}
         </div>
         <div class="body">
           <h3>${esc(c.title)}</h3>
@@ -504,6 +617,7 @@ $("btn-projects").onclick = async () => {
 (async function init() {
   settings = await invoke("get_settings");
   fillOptions(settings.defaults);
+  updateModePill();
   await refreshTools();
   if (!settings.setup_done) {
     openSetup();

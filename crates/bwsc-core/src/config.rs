@@ -88,6 +88,13 @@ pub struct CaptionStyle {
     pub position: CaptionPosition,
     /// Efeito de "pulo" na palavra ativa.
     pub pop: bool,
+    pub italic: bool,
+    /// Cor das palavras que ainda não foram faladas (vazio = mesma cor do texto).
+    pub upcoming_color: String,
+    /// Cor da caixa atrás do texto (vazio = sem caixa, só contorno).
+    pub box_color: String,
+    /// Estilo pronto escolhido na interface (só informativo).
+    pub preset: String,
 }
 
 impl Default for CaptionStyle {
@@ -106,6 +113,10 @@ impl Default for CaptionStyle {
             max_chars: 22,
             position: CaptionPosition::Bottom,
             pop: true,
+            italic: false,
+            upcoming_color: String::new(),
+            box_color: String::new(),
+            preset: "viral".into(),
         }
     }
 }

@@ -14,6 +14,10 @@
       <b>BWSmartClips</b>
     </div>
     <nav class="top-actions">
+      <button class="nav-link how" id="btn-tour">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/></svg>
+        Como funciona
+      </button>
       <button class="nav-link" id="btn-projects">Projetos</button>
       <button class="nav-link" id="btn-settings">Configurações</button>
       <span class="offline-pill" id="mode-pill">● Offline</span>
@@ -33,8 +37,11 @@
 
       <div class="dropbar" id="dropbar">
         <svg class="link-ico" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <input id="source" type="text" placeholder="Cole um link do YouTube ou solte um vídeo aqui" spellcheck="false" />
+        <input id="source" type="text" placeholder="Cole um link do YouTube, Twitch ou Kick" spellcheck="false" />
         <button class="get-btn" id="btn-start">Gerar cortes</button>
+      </div>
+      <div class="platforms">
+        <span class="plat yt">YouTube</span><span class="plat tw">Twitch</span><span class="plat kk">Kick</span><span class="plat pc">Arquivos do PC</span>
       </div>
       <div class="or-row">
         <span>ou</span>
@@ -158,6 +165,10 @@
       <div class="bar"><div id="bar-fill"></div></div>
       <p class="muted" id="progress-msg"></p>
       <pre class="error hidden" id="progress-error"></pre>
+      <div class="actions hidden" id="yt-login-actions">
+        <button class="primary" id="btn-yt-login-retry">Entrar no YouTube e tentar de novo</button>
+        <span class="muted small">Abre uma janela do próprio app. Você faz login uma vez só.</span>
+      </div>
     </section>
 
     <section id="results" class="hidden">
@@ -289,8 +300,14 @@
         </fieldset>
         <fieldset>
           <legend>YouTube</legend>
-          <p class="muted small" style="margin:4px 0 0">Se o YouTube pedir para "confirmar que você não é um robô", o download precisa dos cookies
-            de um navegador em que você está logado no YouTube.</p>
+          <p class="muted small" style="margin:4px 0 0">O app tenta baixar <b>sem login</b> primeiro. Se o YouTube pedir para
+            "confirmar que você não é um robô", basta entrar na sua conta uma vez por aqui.</p>
+          <div class="yt-status">
+            <span id="yt-status-text" class="muted">Não conectado</span>
+            <button class="primary" id="btn-yt-login">Entrar no YouTube</button>
+            <button class="ghost danger hidden" id="btn-yt-logout">Desconectar</button>
+          </div>
+          <p class="muted small" style="margin-top:14px">Alternativas avançadas:</p>
           <div class="path-row"><label>Cookies do YouTube (cookies.txt) <input id="s-cookies" type="text" placeholder="exportado com a extensão &quot;Get cookies.txt LOCALLY&quot;" /></label><button class="secondary" data-pick="s-cookies" data-title="Escolha o arquivo cookies.txt">…</button></div>
           <label class="block">Ou ler cookies do navegador
             <select id="s-cookies-browser">
@@ -380,6 +397,23 @@
         <div class="actions tight">
           <button class="secondary" id="setup-import">Importar modelos…</button>
           <button class="primary" id="setup-go">Baixar e instalar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tour "Como funciona" -->
+  <div id="tour" class="hidden">
+    <div id="tour-spot"></div>
+    <div id="tour-card" role="dialog" aria-live="polite">
+      <div class="tour-top"><span id="tour-count"></span><button class="tour-x" id="tour-skip" title="Fechar">✕</button></div>
+      <h3 id="tour-title"></h3>
+      <p id="tour-text"></p>
+      <div class="tour-bottom">
+        <div class="tour-dots" id="tour-dots"></div>
+        <div class="tour-btns">
+          <button class="ghost" id="tour-prev">Voltar</button>
+          <button class="primary" id="tour-next">Próximo</button>
         </div>
       </div>
     </div>

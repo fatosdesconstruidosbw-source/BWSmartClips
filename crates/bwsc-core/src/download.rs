@@ -17,6 +17,9 @@ pub struct Downloaded {
 pub struct Auth {
     pub cookies_file: Option<PathBuf>,
     pub browser: Option<String>,
+    /// Gerador de "token de origem" (bgutil-pot) e pasta de plugins do yt-dlp.
+    /// Permite passar pela checagem de robô do YouTube sem login.
+    pub pot: Option<(PathBuf, PathBuf)>,
 }
 
 impl Auth {
@@ -25,9 +28,66 @@ impl Auth {
             vec!["--cookies".into(), f.clone().into_os_string()]
         } else if let Some(b) = &self.browser {
             vec!["--cookies-from-browser".into(), b.into()]
+        } else if let Some((exe, plugins)) = &self.pot {
+            // Token e cookies juntos confundem a validação do YouTube: o token só vai sem cookies.
+            vec![
+                "--plugin-dirs".into(),
+                plugins.clone().into_os_string(),
+                "--extractor-args".into(),
+                format!("youtubepot-bgutilscript:script_path={}", exe.display()).into(),
+            ]
         } else {
             Vec::new()
         }
+    }
+
+    fn without_cookies(&self) -> Self {
+        Self { cookies_file: None, browser: None, pot: self.pot.clone() }
+    }
+}
+
+/// O YouTube exigiu login e nada do que foi tentado funcionou.
+#[derive(Debug)]
+pub struct YoutubeLoginRequired(pub String);
+
+impl std::fmt::Display for YoutubeLoginRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "O YouTube pediu para confirmar que você não é um robô.\n\n\
+             Clique em \"Entrar no YouTube\": uma janela do próprio app abre, você faz login uma vez \
+             e o BWSmartClips passa a baixar normalmente.\n\n\
+             Detalhe técnico: {}",
+            self.0
+        )
+    }
+}
+impl std::error::Error for YoutubeLoginRequired {}
+
+/// O link é de uma transmissão ao vivo (não dá para cortar algo que ainda não terminou).
+#[derive(Debug)]
+pub struct LiveStream;
+impl std::fmt::Display for LiveStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Esse link é de uma transmissão AO VIVO. Use o link de um vídeo salvo: na Twitch, um VOD \
+             (twitch.tv/videos/…) ou clipe; na Kick, um vídeo (kick.com/canal/videos/…) ou clipe.",
+        )
+    }
+}
+impl std::error::Error for LiveStream {}
+
+/// Plataforma do link, para mensagens.
+pub fn platform(url: &str) -> &'static str {
+    let u = url.to_lowercase();
+    if u.contains("youtube.com") || u.contains("youtu.be") {
+        "YouTube"
+    } else if u.contains("twitch.tv") {
+        "Twitch"
+    } else if u.contains("kick.com") {
+        "Kick"
+    } else {
+        "site"
     }
 }
 
@@ -38,11 +98,21 @@ const AUTO_BROWSERS: &[&str] = &["firefox", "edge", "chrome", "brave", "opera"];
 
 pub fn is_bot_check(err: &str) -> bool {
     let e = err.to_lowercase();
-    e.contains("not a bot") || e.contains("sign in to confirm") || e.contains("cookies-from-browser")
+    e.contains("not a bot")
+        || e.contains("sign in to confirm")
+        || e.contains("cookies-from-browser")
+        || e.contains("login required")
+        || e.contains("requires authentication")
+        || e.contains("subscriber")
+        || e.contains("sub-only")
+        || e.contains("http error 403")
 }
 
-/// Baixa `url` para `dir`, informando o progresso (0.0–1.0). Se o YouTube pedir
-/// login e nenhum cookie estiver configurado, tenta os navegadores instalados.
+/// Baixa `url` para `dir`, informando o progresso (0.0–1.0).
+///
+/// No YouTube, tenta nesta ordem: sem login (com token de origem, se instalado) →
+/// login salvo / cookies.txt → cookies dos navegadores. Se nada funcionar, devolve
+/// [`YoutubeLoginRequired`] para a interface oferecer o login dentro do app.
 #[allow(clippy::too_many_arguments)]
 pub fn download(
     ytdlp: &Path,
@@ -53,37 +123,48 @@ pub fn download(
     cancel: &Cancel,
     mut on_progress: impl FnMut(f32, &str),
 ) -> Result<Downloaded> {
-    let first = attempt(ytdlp, ffmpeg, url, dir, auth, cancel, &mut on_progress);
-    let err = match first {
-        Ok(d) => return Ok(d),
-        Err(e) if crate::process::is_cancelled_error(&e) => return Err(e),
-        Err(e) => e,
-    };
-    let text = format!("{err:#}");
-    if !is_bot_check(&text) {
-        return Err(err).context("falha no download do vídeo (verifique o link ou atualize o yt-dlp)");
+    let mut plan: Vec<(Auth, Option<String>)> = vec![(auth.without_cookies(), None)];
+    if auth.cookies_file.is_some() {
+        plan.push((Auth { browser: None, pot: None, ..auth.clone() }, Some("usando o login salvo".into())));
     }
-    if auth.cookies_file.is_none() && auth.browser.is_none() {
+    if let Some(b) = &auth.browser {
+        plan.push((Auth { cookies_file: None, browser: Some(b.clone()), pot: None }, Some(format!("usando os cookies do {b}"))));
+    } else if auth.cookies_file.is_none() {
         for b in AUTO_BROWSERS {
-            on_progress(0.0, &format!("YouTube pediu login — tentando os cookies do {b}…"));
-            let a = Auth { cookies_file: None, browser: Some(b.to_string()) };
-            match attempt(ytdlp, ffmpeg, url, dir, &a, cancel, &mut on_progress) {
-                Ok(d) => return Ok(d),
-                Err(e) if crate::process::is_cancelled_error(&e) => return Err(e),
-                Err(_) => continue,
+            plan.push((Auth { cookies_file: None, browser: Some(b.to_string()), pot: None }, Some(format!("tentando os cookies do {b}"))));
+        }
+    }
+
+    let mut last = String::new();
+    for (i, (a, label)) in plan.iter().enumerate() {
+        if let Some(l) = label {
+            on_progress(0.0, &format!("{} pediu login — {l}…", platform(url)));
+        }
+        match attempt(ytdlp, ffmpeg, url, dir, a, cancel, &mut on_progress) {
+            Ok(d) => return Ok(d),
+            Err(e) if crate::process::is_cancelled_error(&e) || e.downcast_ref::<LiveStream>().is_some() => return Err(e),
+            Err(e) => {
+                let text = format!("{e:#}");
+                // Só vale insistir com outros logins se o problema for a checagem de robô/login.
+                if i == 0 && !is_bot_check(&text) {
+                    return Err(e).context(format!("falha no download do vídeo do {} (verifique o link)", platform(url)));
+                }
+                last = text;
             }
         }
     }
+    let detail = last
+        .lines()
+        .find(|l| l.contains("ERROR"))
+        .unwrap_or(last.lines().last().unwrap_or_default())
+        .to_string();
+    if platform(url) == "YouTube" {
+        bail!(YoutubeLoginRequired(detail))
+    }
     bail!(
-        "O YouTube bloqueou o download pedindo para confirmar que você não é um robô.\n\n\
-         Como resolver (uma vez só):\n\
-         1. No navegador, entre na sua conta do YouTube.\n\
-         2. Instale a extensão \"Get cookies.txt LOCALLY\" (Chrome/Edge) ou \"cookies.txt\" (Firefox).\n\
-         3. Abrindo youtube.com, use a extensão para exportar o arquivo cookies.txt.\n\
-         4. No app: Configurações → Ferramentas e modelos → \"Cookies do YouTube\" → escolha o arquivo.\n\n\
-         Se você usa o Firefox logado no YouTube, basta escolher \"Firefox\" em \"Ler cookies do navegador\".\n\n\
-         Detalhe técnico: {}",
-        text.lines().find(|l| l.contains("ERROR")).unwrap_or(text.lines().last().unwrap_or_default())
+        "O {} pediu login para este vídeo (pode ser exclusivo para inscritos). Entre na sua conta no Firefox ou \
+         informe um cookies.txt em Configurações → Ferramentas e modelos.\n\nDetalhe técnico: {detail}",
+        platform(url)
     )
 }
 
@@ -107,6 +188,12 @@ fn attempt(
         "--no-part",
         "--encoding",
         "utf-8",
+        // Twitch/Kick usam HLS: baixar vários pedaços em paralelo acelera muito.
+        "--concurrent-fragments",
+        "4",
+        // Não "baixa" uma live (nunca terminaria).
+        "--match-filters",
+        "!is_live",
         "-f",
         "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
         "--merge-output-format",
@@ -132,7 +219,11 @@ fn attempt(
     }
 
     let mut result: Option<Downloaded> = None;
+    let mut live = false;
     run_lines(cmd, cancel, |_, line| {
+        if line.contains("does not pass filter") && line.contains("is_live") {
+            live = true;
+        }
         if let Some(rest) = line.strip_prefix("BWSC\t") {
             let mut parts = rest.splitn(2, '\t');
             let path = parts.next().unwrap_or_default();
@@ -142,6 +233,9 @@ fn attempt(
             on_progress(p, line);
         }
     })?;
+    if live {
+        bail!(LiveStream);
+    }
 
     match result {
         Some(d) if d.path.is_file() => Ok(d),
@@ -178,8 +272,15 @@ mod tests {
     fn detects_bot_check() {
         assert!(is_bot_check("ERROR: [youtube] x: Sign in to confirm you’re not a bot. Use --cookies-from-browser"));
         assert!(!is_bot_check("ERROR: Video unavailable"));
-        let a = Auth { cookies_file: Some("c.txt".into()), browser: Some("firefox".into()) };
+        let a = Auth { cookies_file: Some("c.txt".into()), browser: Some("firefox".into()), pot: Some(("p.exe".into(), "plug".into())) };
         assert_eq!(a.args(), vec![std::ffi::OsString::from("--cookies"), "c.txt".into()]);
+        // Sem cookies, usa o token de origem.
+        let args = a.without_cookies().args();
+        assert_eq!(args[0], "--plugin-dirs");
+        assert!(args[3].to_string_lossy().contains("script_path=p.exe"));
+        assert_eq!(platform("https://www.twitch.tv/videos/123"), "Twitch");
+        assert_eq!(platform("https://kick.com/x/videos/abc"), "Kick");
+        assert_eq!(platform("https://youtu.be/x"), "YouTube");
     }
 
     #[test]

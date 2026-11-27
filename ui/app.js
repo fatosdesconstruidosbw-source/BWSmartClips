@@ -352,6 +352,7 @@ async function finishSetup() {
   settings.setup_done = true;
   await invoke("save_settings", { settings });
   $("setup-modal").classList.add("hidden");
+  maybeFirstTour();
 }
 
 $("setup-go").onclick = () => startInstall("setup", false);
@@ -412,6 +413,7 @@ $("btn-clear-cache").onclick = async () => {
 
 function openSettings(tab) {
   fillSettings();
+  refreshYtStatus();
   refreshTools();
   $("settings-modal").classList.remove("hidden");
   if (tab) selectTab(tab);
@@ -480,6 +482,7 @@ $("btn-start").onclick = async () => {
     currentJob = await invoke("start_job", { source, options: opts });
     $("progress-card").classList.remove("hidden");
     $("progress-error").classList.add("hidden");
+    $("yt-login-actions").classList.add("hidden");
     $("progress-title").textContent = "Processando…";
     $("btn-cancel").classList.remove("hidden");
     $("bar-fill").style.width = "0%";
@@ -522,9 +525,10 @@ listen("job://error", (d) => {
     $("progress-title").textContent = "Cancelado";
     $("progress-msg").textContent = "";
   } else {
-    $("progress-title").textContent = "Algo deu errado";
+    $("progress-title").textContent = d.kind === "youtube_login" ? "O YouTube pediu login" : "Algo deu errado";
     $("progress-error").textContent = d.message;
     $("progress-error").classList.remove("hidden");
+    $("yt-login-actions").classList.toggle("hidden", d.kind !== "youtube_login");
   }
   currentJob = null;
 });
@@ -612,6 +616,134 @@ $("btn-projects").onclick = async () => {
   $("projects-modal").classList.remove("hidden");
 };
 
+// ------------------------------------------------------------- login do YouTube
+
+let retryAfterLogin = false;
+
+async function refreshYtStatus() {
+  const st = await invoke("youtube_status");
+  $("yt-status-text").innerHTML = st.connected ? `<span class="on">● Conectado ao YouTube</span>` : "Não conectado (só necessário se o YouTube bloquear)";
+  $("btn-yt-login").textContent = st.connected ? "Entrar de novo" : "Entrar no YouTube";
+  $("btn-yt-logout").classList.toggle("hidden", !st.connected);
+}
+
+async function openYoutubeLogin(retry) {
+  retryAfterLogin = retry;
+  try {
+    await invoke("youtube_login");
+    toast("Faça login na janela que abriu. Ela fecha sozinha ao terminar.", 5000);
+  } catch (e) {
+    toast(String(e), 5000);
+  }
+}
+
+$("btn-yt-login").onclick = () => openYoutubeLogin(false);
+$("btn-yt-login-retry").onclick = () => openYoutubeLogin(true);
+$("btn-yt-logout").onclick = async () => {
+  await invoke("youtube_logout");
+  toast("Desconectado do YouTube");
+  refreshYtStatus();
+};
+
+listen("youtube://login", async (ev) => {
+  toast(ev.message, 4000);
+  await refreshYtStatus();
+  if (ev.ok && retryAfterLogin) {
+    retryAfterLogin = false;
+    $("btn-start").click();
+  }
+});
+
+// ------------------------------------------------------------- tour "Como funciona"
+
+const TOUR = [
+  { el: "#dropbar", title: "Escolha o vídeo",
+    text: "Cole o link de um vídeo do <b>YouTube</b>, de um VOD ou clipe da <b>Twitch</b> ou da <b>Kick</b>. Também dá para usar um arquivo do computador: clique em <b>Carregar arquivo</b> ou arraste o vídeo para a janela." },
+  { el: "#sec-clips .panel", title: "Diga o que você quer",
+    text: "Escolha <b>quantos cortes</b> quer e a <b>duração</b> de cada um. No campo de foco, peça algo específico, como <i>momentos engraçados</i> ou <i>dicas práticas</i>, e a IA prioriza isso." },
+  { el: "#sec-reframe", title: "Formato vertical",
+    text: "<b>Seguir rosto</b> mantém quem está falando no centro do vídeo 9:16. Também há <b>Preencher</b> (corta o centro), <b>Fundo desfocado</b> (o vídeo inteiro no meio) e <b>Original</b>." },
+  { el: "#sec-captions", title: "Legendas animadas",
+    text: "Escolha um <b>estilo</b> pronto e veja a prévia no celular. Nas abas <b>Fonte</b> e <b>Efeitos</b> você ajusta cores, tamanho, posição e quantas palavras aparecem por vez." },
+  { el: "#btn-start", title: "Gere os cortes",
+    text: "Clique em <b>Gerar cortes</b>. O app baixa o vídeo, <b>transcreve</b> a fala, a <b>IA escolhe</b> os melhores momentos e <b>renderiza</b> cada corte, tudo no seu PC. Você acompanha cada etapa e pode cancelar quando quiser." },
+  { el: "#btn-projects", title: "Seus cortes",
+    text: "Os cortes aparecem na tela com a <b>nota de viralidade</b>, título, motivo e hashtags. Em <b>Projetos</b> você reabre trabalhos anteriores; os arquivos ficam em <b>Vídeos\\BWSmartClips</b>." },
+  { el: "#btn-settings", title: "Configurações",
+    text: "Aqui você troca os modelos de IA e de transcrição, conecta o <b>YouTube</b> se ele pedir login e, se quiser, ativa as APIs online (Claude/OpenAI). Tudo é opcional." },
+  { el: "#mode-pill", title: "Pronto!",
+    text: "Este selo mostra se o app está trabalhando <b>100% offline</b>. Você pode rever este guia quando quiser em <b>Como funciona</b>." },
+];
+let tourStep = 0;
+
+function tourShow(i) {
+  tourStep = i;
+  const step = TOUR[i];
+  const el = document.querySelector(step.el);
+  if (!el || el.offsetParent === null) return tourShow(i + 1 < TOUR.length ? i + 1 : 0);
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  $("tour-count").textContent = `Passo ${i + 1} de ${TOUR.length}`;
+  $("tour-title").textContent = step.title;
+  $("tour-text").innerHTML = step.text;
+  $("tour-dots").innerHTML = TOUR.map((_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("");
+  $("tour-prev").style.visibility = i === 0 ? "hidden" : "visible";
+  $("tour-next").textContent = i === TOUR.length - 1 ? "Concluir" : "Próximo";
+  setTimeout(tourPlace, 380);
+  tourPlace();
+}
+
+function tourPlace() {
+  if ($("tour").classList.contains("hidden")) return;
+  const el = document.querySelector(TOUR[tourStep].el);
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  Object.assign($("tour-spot").style, {
+    top: `${r.top - pad}px`, left: `${r.left - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px`,
+  });
+  const card = $("tour-card");
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let top = r.bottom + 16;
+  if (top + ch > vh - 12) top = r.top - ch - 16;           // não cabe embaixo → em cima
+  if (top < 12) top = Math.min(vh - ch - 12, Math.max(12, r.top + 12)); // elemento grande → sobreposto
+  let left = r.left + r.width / 2 - cw / 2;
+  left = Math.max(12, Math.min(vw - cw - 12, left));
+  card.style.top = `${top}px`;
+  card.style.left = `${left}px`;
+}
+
+function tourStart() {
+  document.querySelectorAll(".modal").forEach((m) => m.classList.add("hidden"));
+  $("tour").classList.remove("hidden");
+  tourShow(0);
+}
+
+function tourEnd() {
+  $("tour").classList.add("hidden");
+  try { localStorage.setItem("bwsc.tour_done", "1"); } catch (_) {}
+}
+
+$("btn-tour").onclick = tourStart;
+$("tour-next").onclick = () => (tourStep + 1 < TOUR.length ? tourShow(tourStep + 1) : tourEnd());
+$("tour-prev").onclick = () => tourStep > 0 && tourShow(tourStep - 1);
+$("tour-skip").onclick = tourEnd;
+$("tour").addEventListener("click", (e) => { if (e.target.id === "tour") tourEnd(); });
+window.addEventListener("resize", tourPlace);
+window.addEventListener("scroll", tourPlace, { passive: true });
+document.addEventListener("keydown", (e) => {
+  if ($("tour").classList.contains("hidden")) return;
+  if (e.key === "Escape") tourEnd();
+  if (e.key === "ArrowRight" || e.key === "Enter") $("tour-next").click();
+  if (e.key === "ArrowLeft") $("tour-prev").click();
+});
+
+function maybeFirstTour() {
+  let done = false;
+  try { done = localStorage.getItem("bwsc.tour_done") === "1"; } catch (_) {}
+  if (!done) setTimeout(tourStart, 600);
+}
+
 // ------------------------------------------------------------- início
 
 (async function init() {
@@ -623,6 +755,7 @@ $("btn-projects").onclick = async () => {
     openSetup();
     return;
   }
+  maybeFirstTour();
   const cloud = { anthropic: "anthropic_api_key", open_ai: "openai_api_key" }[settings.llm_provider];
   if (cloud && !settings[cloud]) {
     openSettings("tab-ai");

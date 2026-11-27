@@ -1,6 +1,8 @@
 // Esconde o console no Windows em modo release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod youtube_login;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -155,6 +157,24 @@ async fn import_models(app: AppHandle) -> CmdResult<bool> {
     Ok(true)
 }
 
+// ----------------------------------------------------------------- YouTube
+
+/// Precisa ser `async`: no Windows, criar webviews em comando síncrono trava.
+#[tauri::command]
+async fn youtube_login(app: AppHandle) -> CmdResult<()> {
+    youtube_login::open(&app).map_err(err)
+}
+
+#[tauri::command]
+fn youtube_status() -> youtube_login::LoginStatus {
+    youtube_login::status()
+}
+
+#[tauri::command]
+fn youtube_logout() -> CmdResult<()> {
+    youtube_login::logout().map_err(err)
+}
+
 #[tauri::command]
 fn clear_cache() -> CmdResult<()> {
     Cache::new(true).clear().map_err(err)
@@ -235,6 +255,8 @@ struct JobError {
     id: String,
     message: String,
     cancelled: bool,
+    /// "youtube_login" quando o YouTube exige login (a interface mostra o botão "Entrar no YouTube").
+    kind: String,
 }
 
 #[tauri::command]
@@ -268,7 +290,16 @@ fn start_job(app: AppHandle, state: State<AppState>, source: String, options: Cl
             Err(e) => {
                 let _ = app.emit(
                     "job://error",
-                    JobError { id: job_id, message: format!("{e:#}"), cancelled: is_cancelled_error(&e) },
+                    JobError {
+                        id: job_id,
+                        message: format!("{e:#}"),
+                        cancelled: is_cancelled_error(&e),
+                        kind: if e.chain().any(|c| c.downcast_ref::<bwsc_core::download::YoutubeLoginRequired>().is_some()) {
+                            "youtube_login".into()
+                        } else {
+                            String::new()
+                        },
+                    },
                 );
             }
         }
@@ -319,6 +350,9 @@ fn main() {
             estimate_install,
             import_models,
             clear_cache,
+            youtube_login,
+            youtube_status,
+            youtube_logout,
             cancel_install,
             pick_video,
             pick_folder,

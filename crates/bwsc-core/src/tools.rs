@@ -20,6 +20,8 @@ pub struct Tools {
     pub llama: Option<PathBuf>,
     /// Modelo .gguf da IA local.
     pub llm_model: Option<PathBuf>,
+    /// Gerador de token do YouTube (bgutil-pot) e a pasta de plugins do yt-dlp.
+    pub pot: Option<(PathBuf, PathBuf)>,
 }
 
 impl Tools {
@@ -35,6 +37,7 @@ impl Tools {
             vad_model: find_in_models(|n| n.starts_with("ggml-silero") && n.ends_with(".bin"), false),
             llama: find_exe("llama-server", &settings.llama_path),
             llm_model: find_llm_model(&settings.llm_model),
+            pot: find_pot(),
         }
     }
 
@@ -116,6 +119,20 @@ pub fn find_exe(name: &str, configured: &str) -> Option<PathBuf> {
 fn is_whisper_cpp(p: &Path) -> bool {
     // O "whisper" do Python não aceita -m; só aceitamos se estiver na pasta do app.
     p.starts_with(tools_dir())
+}
+
+/// Pasta de plugins do yt-dlp mantida pelo app.
+pub fn ytdlp_plugins_dir() -> PathBuf {
+    tools_dir().join("yt-dlp-plugins")
+}
+
+/// Nome da pasta do plugin do provedor de token dentro de [`ytdlp_plugins_dir`].
+pub const POT_PLUGIN: &str = "bgutil-ytdlp-pot-provider";
+
+fn find_pot() -> Option<(PathBuf, PathBuf)> {
+    let exe = find_exe("bgutil-pot", "")?;
+    let plugins = ytdlp_plugins_dir();
+    plugins.join(POT_PLUGIN).join("yt_dlp_plugins").is_dir().then_some((exe, plugins))
 }
 
 /// Modelo Whisper configurado ou o maior `ggml-*.bin` da pasta de modelos.

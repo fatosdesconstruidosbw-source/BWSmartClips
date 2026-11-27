@@ -59,6 +59,9 @@ const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-esse
 const WHISPER_REPO: &str = "ggml-org/whisper.cpp";
 const WHISPER_ASSET: &str = "whisper-bin-x64.zip";
 const LLAMA_REPO: &str = "ggml-org/llama.cpp";
+/// Gerador de "token de origem" do YouTube (permite baixar sem login na maioria dos casos).
+const POT_REPO: &str = "jim60105/bgutil-ytdlp-pot-provider-rs";
+const POT_PLUGIN_ZIP: &str = "bgutil-ytdlp-pot-provider-rs.zip";
 const DENO_URL: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
 
 pub fn whisper_model(id: &str) -> Option<&'static ModelInfo> {
@@ -228,8 +231,103 @@ fn install_windows_tools(
             bail!("o pacote do llama.cpp não contém llama-server.exe");
         }
     }
+    // Token de origem do YouTube (opcional: sem ele o app usa login/cookies).
+    let pot_exe = tools.join("bgutil-pot.exe");
+    let plugin_dir = crate::tools::ytdlp_plugins_dir().join(crate::tools::POT_PLUGIN);
+    if force || !pot_exe.exists() || !plugin_dir.join("yt_dlp_plugins").is_dir() {
+        match install_pot(client, &tools, &tmp, cancel, step) {
+            Ok(()) => {}
+            Err(e) if e.downcast_ref::<Cancelled>().is_some() => return Err(e),
+            Err(e) => step("token", 1.0, format!("Não foi possível instalar o token do YouTube (opcional): {e}")),
+        }
+    }
     let _ = std::fs::remove_dir_all(&tmp);
     Ok(())
+}
+
+fn is_pot_binary(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("windows") && (n.contains("x86_64") || n.contains("amd64") || n.contains("x64")) && (n.ends_with(".exe") || n.ends_with(".zip"))
+}
+
+fn is_pot_plugin(name: &str) -> bool {
+    name == POT_PLUGIN_ZIP
+}
+
+fn install_pot(
+    client: &reqwest::blocking::Client,
+    tools: &Path,
+    tmp: &Path,
+    cancel: &Cancel,
+    step: &mut dyn FnMut(&str, f32, String),
+) -> Result<()> {
+    step("token", 0.0, "Procurando o gerador de token do YouTube…".into());
+    let bin_url = find_release_asset(client, POT_REPO, is_pot_binary)?;
+    let plugin_url = find_release_asset(client, POT_REPO, is_pot_plugin)?;
+    let exe = tools.join("bgutil-pot.exe");
+    if bin_url.to_lowercase().ends_with(".zip") {
+        let zip = tmp.join("pot-bin.zip");
+        download_file(client, &bin_url, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
+        let found = extract_first_exe(&zip, &exe)?;
+        if !found {
+            bail!("o pacote não contém o executável");
+        }
+    } else {
+        download_file(client, &bin_url, &exe, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
+    }
+    let zip = tmp.join("pot-plugin.zip");
+    download_file(client, &plugin_url, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando plugin do yt-dlp… {}", fmt_progress(d, t))))?;
+    install_plugin_zip(&zip, &crate::tools::ytdlp_plugins_dir(), crate::tools::POT_PLUGIN)
+}
+
+/// Extrai o plugin preservando as pastas e garante o formato `<pasta>/<nome>/yt_dlp_plugins/…`.
+fn install_plugin_zip(zip_path: &Path, plugins_dir: &Path, name: &str) -> Result<()> {
+    let staging = plugins_dir.join("_extraindo");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)?;
+    let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let out = staging.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out)?;
+        } else {
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::io::copy(&mut entry, &mut File::create(&out)?)?;
+        }
+    }
+    // Acha a pasta que contém "yt_dlp_plugins".
+    fn find_root(dir: &Path, depth: usize) -> Option<PathBuf> {
+        if dir.join("yt_dlp_plugins").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        if depth == 0 {
+            return None;
+        }
+        std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).find_map(|p| find_root(&p, depth - 1))
+    }
+    let root = find_root(&staging, 3).context("o pacote do plugin não tem a pasta yt_dlp_plugins")?;
+    let target = plugins_dir.join(name);
+    let _ = std::fs::remove_dir_all(&target);
+    std::fs::rename(&root, &target)?;
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(())
+}
+
+fn extract_first_exe(zip_path: &Path, dest: &Path) -> Result<bool> {
+    let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let is_exe = entry.enclosed_name().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase())).is_some_and(|n| n.ends_with(".exe"));
+        if is_exe {
+            std::io::copy(&mut entry, &mut File::create(dest)?)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Procura, da versão mais nova para a mais antiga (incluindo pré-lançamentos/builds
@@ -464,6 +562,30 @@ mod tests {
             assert!(r.status().is_success(), "{url}: {}", r.status());
         }
         eprintln!("whisper: {w}\nllama: {l}");
+        // Gerador de token do YouTube: mostra os arquivos publicados se não achar.
+        let rels: serde_json::Value = c
+            .get(format!("https://api.github.com/repos/{POT_REPO}/releases?per_page=5"))
+            .bearer_auth(std::env::var("GITHUB_TOKEN").unwrap_or_default())
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        let names: Vec<String> = rels.as_array().unwrap().iter().take(1)
+            .flat_map(|r| r["assets"].as_array().cloned().unwrap_or_default())
+            .filter_map(|a| a["name"].as_str().map(str::to_string)).collect();
+        eprintln!("pot assets: {names:?}");
+        let b = pick_asset(&rels, is_pot_binary).unwrap_or_else(|| panic!("sem binário Windows: {names:?}"));
+        let p = pick_asset(&rels, is_pot_plugin).unwrap_or_else(|| panic!("sem plugin: {names:?}"));
+        eprintln!("pot: {b}\nplugin: {p}");
+
+        // Instala de verdade numa pasta temporária e confere a estrutura do plugin.
+        let tmp = std::env::temp_dir().join(format!("bwsc-pot-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let zip = tmp.join("plugin.zip");
+        download_file(&c, &p, &zip, &Cancel::new(), &mut |_, _, _| {}).unwrap();
+        install_plugin_zip(&zip, &tmp.join("plugins"), crate::tools::POT_PLUGIN).unwrap();
+        assert!(tmp.join("plugins").join(crate::tools::POT_PLUGIN).join("yt_dlp_plugins").is_dir());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

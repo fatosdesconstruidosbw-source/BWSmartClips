@@ -276,6 +276,11 @@ pub fn models_dir() -> PathBuf {
     app_data_dir().join("models")
 }
 
+/// Cookies do YouTube salvos pelo login feito dentro do app.
+pub fn youtube_cookies_path() -> PathBuf {
+    app_data_dir().join("youtube-cookies.txt")
+}
+
 /// Cache de transcrições, análises e downloads.
 pub fn cache_dir() -> PathBuf {
     app_data_dir().join("cache")

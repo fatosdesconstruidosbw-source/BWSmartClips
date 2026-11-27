@@ -30,32 +30,48 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Conferir versão da tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Preparar versão
+        id: prep
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}".TrimStart("v")
-          $app = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ($tag -ne $app -or $tag -ne $cargo) {
-            Write-Error "A tag v$tag não bate com a versão do app ($app) / Cargo.toml ($cargo). Atualize as versões antes de criar a tag."
-            exit 1
+          if ($ver -ne $cargo) { Write-Error "Versões diferentes: tauri.conf.json=$ver, Cargo.toml=$cargo"; exit 1 }
+          $tag = "v$ver"
+          $isTag = "${{ github.ref }}".StartsWith("refs/tags/v")
+          if ($isTag -and "${{ github.ref_name }}" -ne $tag) { Write-Error "A tag ${{ github.ref_name }} não bate com a versão do app ($ver)."; exit 1 }
+          $publish = $false
+          if ($isTag) { $publish = $true }
+          elseif ("${{ github.ref }}" -eq "refs/heads/main" -and "${{ github.event_name }}" -eq "push") {
+            gh release view $tag --repo "${{ github.repository }}" *> $null
+            $publish = ($LASTEXITCODE -ne 0)   # só publica se essa versão ainda não existe
           }
-          $notes = (Get-Content CHANGELOG.md -Raw)
-          $m = [regex]::Match($notes, "(?ms)^## \[$([regex]::Escape($tag))\][^\n]*\n(.*?)(?=^## \[|\z)")
-          if (-not $m.Success) { Write-Error "CHANGELOG.md não tem a seção [$tag]."; exit 1 }
-          $body = $m.Groups[1].Value.Trim()
-          $install = @"
+          $notes = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($notes, "(?ms)^## \[$([regex]::Escape($ver))\][^\n]*\n(.*?)(?=^## \[|\z)")
+          if ($publish -and -not $m.Success) {
+            Write-Warning "CHANGELOG.md não tem a seção [$ver]; a versão não será publicada."
+            $publish = $false
+          }
+          if ($publish) {
+            $body = $m.Groups[1].Value.Trim()
+            $install = @"
 
           ---
           ### Como instalar
-          1. Baixe **BWSmartClips_$($tag)_x64-setup.exe** em *Assets*, logo abaixo.
+          1. Baixe **BWSmartClips_$($ver)_x64-setup.exe** em *Assets*, logo abaixo.
           2. Execute. Se o Windows mostrar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo** (o instalador não tem assinatura digital paga).
           3. Abra o **BWSmartClips** pelo menu Iniciar. Na primeira vez, o assistente baixa as ferramentas e os modelos (cerca de 4 GB, uma única vez).
 
           Já tem uma versão instalada? Basta instalar esta por cima: configurações, modelos e projetos são mantidos.
           "@
-          ($body + $install) | Set-Content -Encoding utf8 release-notes.md
+            ($body + $install) | Set-Content -Encoding utf8 release-notes.md
+          }
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "prerelease=$($ver.Contains('-').ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          Write-Host "Versão $ver — publicar: $publish"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Verificar downloads do instalador (GitHub real)
@@ -85,14 +101,16 @@ jobs:
         with:
           name: BWSmartClips-linha-de-comando
           path: out/cli/*
-      - name: Publicar release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publicar versão em Releases
+        if: steps.prep.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: BWSmartClips ${{ github.ref_name }}
+          tag_name: ${{ steps.prep.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: BWSmartClips ${{ steps.prep.outputs.tag }}
           body_path: release-notes.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.prep.outputs.prerelease }}
+          make_latest: ${{ steps.prep.outputs.prerelease == 'false' }}
           files: |
             out/instalador/*
             out/cli/*

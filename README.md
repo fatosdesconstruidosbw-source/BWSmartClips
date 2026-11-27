@@ -120,11 +120,12 @@ ui                   interface (HTML/CSS/JS puro, sem etapa de build)
 
 1. Anote as mudanças em `CHANGELOG.md`, numa seção `## [X.Y.Z] - AAAA-MM-DD`.
 2. Atualize a versão em `Cargo.toml` (`[workspace.package]`) e em `src-tauri/tauri.conf.json`.
-3. Faça o commit e crie a tag: `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+3. Faça o commit e envie para o `main`.
 
-O GitHub Actions confere se a tag bate com a versão, compila e publica a página em Releases com o
-instalador, o `.msi`, a linha de comando e o texto do CHANGELOG. Tags com hífen (ex.: `v1.1.0-beta.1`)
-saem como pré-lançamento, para testes.
+Quando chega ao `main` um número de versão que ainda não existe em Releases (e com seção no CHANGELOG),
+o GitHub Actions compila, cria a tag `vX.Y.Z` e publica a página com o instalador, o `.msi`, a linha de
+comando e o texto do CHANGELOG. Commits sem mudança de versão só geram o instalador de teste em Actions.
+Versões com hífen (ex.: `1.1.0-beta.1`) saem como pré-lançamento.
 
 Versões: `X.Y.Z` → correção aumenta o Z, recurso novo aumenta o Y, mudança grande aumenta o X.
 

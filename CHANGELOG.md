@@ -5,6 +5,8 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+## [1.3.0] - 2026-11-28
+
 ### Novidades
 - **Escolha onde salvar os cortes** direto no painel "Cortes": "Escolher pasta…" ou deixar na pasta padrão do app
   (Vídeos\BWSmartClips). Clique no caminho para abrir a pasta. A lista de Projetos continua mostrando os cortes
@@ -25,6 +27,12 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
   é só escolher essa pasta: o app usa os modelos de lá, sem copiar. Os modelos que já estavam na pasta antiga continuam
   funcionando, e o botão **"Mover para a nova pasta"** leva todos para o novo lugar (com progresso, sem perder nada se
   for interrompido).
+
+### Observações
+- Use o arquivo **`-setup.exe`** (o `.msi` instala em "Arquivos de Programas", no disco C, e não permite escolher a pasta).
+- O instalador ainda não tem assinatura digital, e o Windows Defender pode marcá-lo por engano (alertas terminados em
+  `!ml` são suspeitas automáticas, não um vírus conhecido). O instalador é gerado pelo GitHub a partir do código público
+  deste repositório; confira no VirusTotal se quiser.
 
 ## [1.2.0] - 2026-11-27
 

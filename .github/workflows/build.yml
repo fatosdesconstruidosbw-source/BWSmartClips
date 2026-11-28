@@ -197,6 +197,12 @@ jobs:
             [xml]$x = Get-Content out/store/wack-relatorio.xml
             Write-Host "Resultado geral: $($x.REPORT.OVERALL_RESULT)"
             $x.SelectNodes("//TEST") | ForEach-Object { "{0,-8} {1}" -f $_.RESULT.InnerText, $_.NAME } | Write-Host
+            # Detalhes dos testes que não passaram
+            $x.SelectNodes("//TEST[RESULT!='PASS']") | ForEach-Object {
+              Write-Host "---- $($_.NAME) ($($_.RESULT.InnerText))"
+              $_.SelectNodes(".//MESSAGE") | Select-Object -First 30 | ForEach-Object { Write-Host "   $($_.Text)" }
+              $_.OuterXml.Substring(0, [Math]::Min(3000, $_.OuterXml.Length)) | Write-Host
+            }
           }
       - name: Enviar pacote da Store
         uses: actions/upload-artifact@v4

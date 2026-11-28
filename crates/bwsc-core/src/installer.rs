@@ -130,6 +130,21 @@ fn client() -> Result<reqwest::blocking::Client> {
         .build()?)
 }
 
+/// SHA-256 que o Hugging Face publica para um arquivo (cabeçalho `X-Linked-Etag` da resposta
+/// de redirecionamento de `/resolve/`).
+pub fn hf_sha256(url: &str) -> Option<String> {
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .user_agent("BWSmartClips")
+        .build()
+        .ok()?;
+    let r = client.head(url).send().ok()?;
+    let tag = r.headers().get("x-linked-etag").or_else(|| r.headers().get("etag"))?.to_str().ok()?;
+    let h = tag.trim().trim_start_matches("W/").trim_matches('"').to_lowercase();
+    (h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit())).then_some(h)
+}
+
 /// Baixa e instala o que falta.
 pub fn install(req: &InstallRequest, cancel: &Cancel, on_progress: &mut dyn FnMut(InstallProgress)) -> Result<()> {
     let models = models_dir();
@@ -163,7 +178,9 @@ pub fn install(req: &InstallRequest, cancel: &Cancel, on_progress: &mut dyn FnMu
             "whisper" => format!("modelo Whisper \"{}\"", m.id),
             _ => format!("modelo de IA \"{}\"", m.id),
         };
-        download_file(&client, m.url, &target, cancel, &mut |p, done, total| {
+        // O Hugging Face publica o SHA-256 de cada arquivo grande: o modelo só é aceito se conferir.
+        let asset = Asset { url: m.url.to_string(), sha256: hf_sha256(m.url) };
+        download_verified(&client, &asset, &target, cancel, &mut |p, done, total| {
             step(kind, p, format!("Baixando {what}… {}", fmt_progress(done, total)))
         })?;
     }
@@ -834,6 +851,17 @@ mod tests {
             let r = c.head(a.url.as_str()).send().unwrap();
             assert!(r.status().is_success(), "{}: {}", a.url, r.status());
         }
+        // Modelos no Hugging Face: todos precisam ter SHA-256 publicado.
+        for m in WHISPER_MODELS.iter().chain(LLM_MODELS).chain(std::iter::once(&VAD_MODEL)) {
+            let h = hf_sha256(m.url);
+            eprintln!("{} sha256={h:?}", m.url);
+            assert!(h.is_some(), "modelo sem SHA-256 publicado: {}", m.url);
+        }
+        let vad = Asset { url: VAD_MODEL.url.to_string(), sha256: hf_sha256(VAD_MODEL.url) };
+        let tmpv = std::env::temp_dir().join(format!("bwsc-vad-{}", std::process::id()));
+        std::fs::create_dir_all(&tmpv).unwrap();
+        download_verified(&c, &vad, &tmpv.join(VAD_MODEL.file), &Cancel::new(), &mut |_, _, _| {}).unwrap();
+        let _ = std::fs::remove_dir_all(&tmpv);
         // Confere de verdade um download pequeno (yt-dlp) contra o SHA-256 publicado.
         let tmp0 = std::env::temp_dir().join(format!("bwsc-verify-{}", std::process::id()));
         std::fs::create_dir_all(&tmp0).unwrap();

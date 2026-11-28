@@ -813,6 +813,8 @@ function showResults(project) {
           <div class="meta">${fmtTime(c.start)} – ${fmtTime(c.end)} · ${Math.round(dur)}s</div>
           ${c.reason ? `<div class="reason">${esc(c.reason)}</div>` : ""}
           ${tags ? `<div class="tags">${esc(tags)}</div>` : ""}
+          ${c.title || c.reason ? `<div class="ai-note">Título, nota e hashtags gerados por IA — revise antes de publicar ·
+            <button class="link" data-act="report" data-i="${i}">reportar</button></div>` : ""}
           <div class="row">
             <button class="secondary" data-act="copy" data-i="${i}">📋 Legenda</button>
             <button class="secondary" data-act="reveal" data-i="${i}">📂 Pasta</button>
@@ -843,6 +845,7 @@ $("clips").addEventListener("click", async (e) => {
   if (!b || !currentProject) return;
   const c = currentProject.clips[+b.dataset.i];
   try {
+    if (b.dataset.act === "report") return reportAi(`${c.title}\n${c.reason || ""}\n${(c.hashtags || []).join(" ")}`);
     if (b.dataset.act === "reveal") await invoke("reveal", { path: c.file });
     if (b.dataset.act === "open") await invoke("open_file", { path: c.file });
     if (b.dataset.act === "copy") {
@@ -1019,7 +1022,88 @@ function maybeFirstTour() {
 
 // ------------------------------------------------------------- início
 
+// ------------------------------------------------------------- edição, licença e documentos
+
+// E-mail público de suporte (o mesmo informado no Partner Center). Também aparece nos documentos.
+const SUPPORT_EMAIL = "";
+let edition = null;
+
+function openUrl(url) {
+  return invoke("plugin:opener|open_url", { url }).catch((e) => toast(String(e), 5000));
+}
+
+function reportAi(text = "") {
+  if (!SUPPORT_EMAIL) return toast("Canal de denúncia ainda não configurado.", 4000);
+  const body = encodeURIComponent(`Conteúdo gerado pela IA que quero reportar:\n\n${text}\n\nMotivo:`);
+  openUrl(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("BWSmartClips — conteúdo da IA")}&body=${body}`);
+}
+
+async function loadEdition(recheck = false) {
+  try {
+    edition = await invoke("edition_info", { recheck });
+  } catch (_) {
+    return;
+  }
+  const e = edition.edition, lic = edition.license;
+  $("about-version").textContent = "v" + edition.version;
+  $("about-edition").textContent = e.store ? "Edição Microsoft Store" : "Edição direta (instalador próprio)";
+  const box = $("about-license");
+  box.className = "license-box " + (!lic.required ? "" : lic.ok ? "ok" : "bad");
+  box.textContent = !lic.required
+    ? "Esta edição não usa a licença da Microsoft Store."
+    : lic.state === "ok" ? "Licença vitalícia ativa na Microsoft Store ✔"
+    : lic.state === "trial" ? "Versão de avaliação da Microsoft Store."
+    : lic.message;
+  if (!e.link_download) {
+    $("source").placeholder = "Arraste um vídeo para cá ou clique em Carregar arquivo";
+    $("platforms").classList.add("hidden");
+    document.querySelector("fieldset.accounts")?.classList.add("hidden");
+    TOUR[0].text = "Use um vídeo do seu computador: clique em <b>Carregar arquivo</b> ou arraste o vídeo para a janela. " +
+      "A gravação da sua live ou o vídeo do seu canal baixado pelo YouTube Studio servem.";
+  }
+  if (e.store) {
+    $("data-dir-hint").innerHTML = "Configurações, modelos baixados e cache ficam na pasta do app no Windows. Para levar tudo para outro disco, use " +
+      "<b>Configurações do Windows → Aplicativos → BWSmartClips → Mover</b>. Os modelos também podem ficar em outra pasta (abaixo).";
+  }
+  const locked = lic.required && !lic.ok;
+  $("license-lock").classList.toggle("hidden", !locked);
+  if (locked) $("lock-msg").textContent = lic.message;
+  let pill = document.querySelector(".trial-pill");
+  if (lic.trial && !pill) {
+    pill = document.createElement("span");
+    pill.className = "trial-pill";
+    pill.textContent = "Avaliação";
+    $("mode-pill").after(pill);
+    pill.onclick = () => invoke("open_store");
+  }
+}
+
+$("btn-lock-store").onclick = () => invoke("open_store").catch((e) => toast(String(e), 5000));
+$("btn-lock-retry").onclick = async () => {
+  $("btn-lock-retry").disabled = true;
+  await loadEdition(true);
+  $("btn-lock-retry").disabled = false;
+  if (!$("license-lock").classList.contains("hidden")) toast("Licença ainda não encontrada.", 4000);
+};
+$("btn-report-ai").onclick = () => reportAi();
+
+document.querySelectorAll("[data-doc]").forEach((b) => (b.onclick = async () => {
+  const lang = b.dataset.lang || "pt-BR";
+  try {
+    const r = await fetch(`legal/${lang}/${b.dataset.doc}.html`);
+    if (!r.ok) throw new Error(r.status);
+    const html = await r.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    $("doc-title").textContent = b.textContent.trim();
+    $("doc-body").replaceChildren(...doc.body.childNodes);
+    $("doc-modal").classList.remove("hidden");
+  } catch (_) {
+    toast("Documento não encontrado nesta versão.", 4000);
+  }
+}));
+
 (async function init() {
+  loadEdition();
   settings = await invoke("get_settings");
   fillOptions(settings.defaults);
   defaultOutput = await invoke("default_output_dir");

@@ -110,7 +110,8 @@ fn tool_status(state: State<AppState>) -> ToolStatus {
         legacy_data: installer::legacy_data().map(|(p, mb)| (p.to_string_lossy().into_owned(), mb)),
         leftover_models: installer::leftover_models(),
         free_space_mb: installer::free_space().map(|b| b / 1_048_576),
-        tools_installer_supported: cfg!(windows),
+        // Na edição Store as ferramentas vêm no pacote: o app não baixa nem atualiza programas.
+        tools_installer_supported: cfg!(windows) && !bwsc_core::EDITION.store,
         installing: state.install.lock().unwrap().is_some(),
     }
 }

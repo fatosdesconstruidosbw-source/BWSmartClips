@@ -44,7 +44,7 @@
         <input id="source" type="text" placeholder="Cole um link do YouTube, Twitch ou Kick" spellcheck="false" />
         <button class="get-btn" id="btn-start">Gerar cortes</button>
       </div>
-      <div class="platforms">
+      <div class="platforms" id="platforms">
         <span class="plat yt">YouTube</span><span class="plat tw">Twitch</span><span class="plat kk">Kick</span><span class="plat pc">Arquivos do PC</span>
       </div>
       <div class="or-row">
@@ -246,6 +246,7 @@
         <button class="tab" data-tab="tab-transcription">Transcrição</button>
         <button class="tab" data-tab="tab-tools">Ferramentas e modelos</button>
         <button class="tab" data-tab="tab-output">Saída</button>
+        <button class="tab" data-tab="tab-about">Sobre</button>
       </div>
 
       <div class="tab-body" id="tab-ai">
@@ -329,7 +330,7 @@
         <fieldset>
           <legend>Pasta do programa</legend>
           <div class="out-path static"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="out-text" id="data-dir"></span></div>
-          <p class="muted small" style="margin:8px 0 0">Configurações, ferramentas, modelos e cache ficam junto do programa. Para usar outro disco,
+          <p class="muted small" style="margin:8px 0 0" id="data-dir-hint">Configurações, ferramentas, modelos e cache ficam junto do programa. Para usar outro disco,
             reinstale e escolha a pasta (ex.: <b>D:\BWSmartClips</b>) na tela do instalador que pergunta <b>onde instalar</b>.</p>
           <div class="leftover hidden" data-legacy></div>
         </fieldset>
@@ -421,7 +422,36 @@
         </fieldset>
       </div>
 
-      <div class="modal-foot">
+            <div class="tab-body hidden" id="tab-about">
+        <div class="about-head">
+          <img src="icone.png" alt="" class="about-icon" />
+          <div>
+            <h3>BWSmartClips <span class="muted" id="about-version"></span></h3>
+            <p class="muted small" id="about-edition"></p>
+          </div>
+        </div>
+        <div class="license-box" id="about-license"></div>
+        <fieldset>
+          <legend>Documentos</legend>
+          <div class="doc-links">
+            <button class="link" data-doc="termos-de-uso">Termos de Uso</button>
+            <button class="link" data-doc="licenca-de-uso">Licença de Uso do Software (EULA)</button>
+            <button class="link" data-doc="politica-de-privacidade">Política de Privacidade</button>
+            <button class="link" data-doc="avisos-de-terceiros">Avisos de licenças de terceiros</button>
+          </div>
+          <p class="muted small">English versions: <button class="link" data-doc="terms-of-use" data-lang="en">Terms</button> ·
+            <button class="link" data-doc="end-user-license-agreement" data-lang="en">EULA</button> ·
+            <button class="link" data-doc="privacy-policy" data-lang="en">Privacy</button> ·
+            <button class="link" data-doc="third-party-notices" data-lang="en">Third-party notices</button></p>
+        </fieldset>
+        <fieldset>
+          <legend>Inteligência artificial</legend>
+          <p class="muted small">A IA roda no seu computador. Títulos, justificativas, notas e hashtags dos cortes são gerados por IA e podem conter
+            erros ou conteúdo inadequado: revise antes de publicar.</p>
+          <button class="secondary" id="btn-report-ai">Reportar conteúdo gerado pela IA</button>
+        </fieldset>
+      </div>
+<div class="modal-foot">
         <span class="muted small" id="settings-status"></span>
         <button class="primary" id="btn-save-settings">Salvar</button>
       </div>
@@ -502,6 +532,30 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div class="modal hidden" id="doc-modal">
+    <div class="modal-box wide">
+      <div class="modal-head">
+        <h2 id="doc-title">Documento</h2>
+        <button class="ghost" data-close>✕</button>
+      </div>
+      <div class="tab-body doc-body" id="doc-body"></div>
+    </div>
+  </div>
+
+  <div class="license-lock hidden" id="license-lock">
+    <div class="lock-box">
+      <img src="logotipo.png" alt="BWSmartClips" class="lock-logo" />
+      <h2>Licença necessária</h2>
+      <p id="lock-msg"></p>
+      <div class="actions tight">
+        <button class="primary" id="btn-lock-store">Abrir na Microsoft Store</button>
+        <button class="secondary" id="btn-lock-retry">Verificar novamente</button>
+      </div>
+      <p class="muted small">A compra e a licença vitalícia ficam na sua conta da Microsoft. Já comprou? Entre na Microsoft Store com a mesma conta e
+        clique em "Verificar novamente".</p>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

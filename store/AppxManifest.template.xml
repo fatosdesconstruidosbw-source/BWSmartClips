@@ -40,7 +40,7 @@
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square310x310Logo="Assets\Square310x310Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" />
       </uap:VisualElements>
       <Extensions>
-        <!-- Permite rodar "bwsmartclips.exe --self-test" no teste automático do pacote. -->
+        <!-- Alias de linha de comando, usado no autoteste automático do pacote. -->
         <uap3:Extension Category="windows.appExecutionAlias" Executable="BWSmartClips.exe" EntryPoint="Windows.FullTrustApplication">
           <uap3:AppExecutionAlias>
             <desktop:ExecutionAlias Alias="bwsmartclips.exe" />

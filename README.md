@@ -129,9 +129,10 @@ Versões com hífen (ex.: `1.1.0-beta.1`) saem como pré-lançamento.
 
 Versões: `X.Y.Z` → correção aumenta o Z, recurso novo aumenta o Y, mudança grande aumenta o X.
 
-## Licenças de terceiros
+## Licença
 
-- Modelo de detecção de rosto SeetaFace (`seeta_fd_frontal_v1.0.bin`) — BSD 2-Clause
-- Fonte Montserrat — SIL Open Font License 1.1
-- ffmpeg, yt-dlp, Deno, whisper.cpp, llama.cpp e os modelos (Whisper, Silero, Qwen 3.5 — Apache 2.0)
-  são baixados à parte e seguem suas próprias licenças.
+Software proprietário — todos os direitos reservados (veja `LICENSE`). As versões 1.0.0 a 1.3.0 foram
+publicadas antes sob a licença MIT.
+
+Componentes de terceiros: `docs/legal/pt-BR/avisos-de-terceiros.md` (gerado por `scripts/gerar-documentos.py`).
+Documentos para a venda (privacidade, termos, EULA) em `docs/legal/` e o guia da Microsoft Store em `docs/loja/`.

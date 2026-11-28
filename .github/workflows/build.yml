@@ -176,7 +176,13 @@ jobs:
           if ($j.edition.link_download) { throw "o download por link deveria estar desligado nesta compilação" }
           if (-not $j.license.required) { throw "a edição Store precisa exigir licença" }
           Write-Host "Licença (pacote de teste, fora da Store): $($j.license.state) — $($j.license.message)"
-          & (Get-ChildItem $j.tools.ffmpeg).FullName -hide_banner -version | Select-Object -First 1
+          foreach ($t in "ffmpeg", "ffprobe", "whisper", "llama", "llama_gpu") {
+            $run = $j.runs.$t
+            Write-Host ("{0,-10} ok={1} {2}" -f $t, $run.ok, $run.detail)
+            if (-not $run.ok) { throw "$t não executou de dentro do pacote: $($run.detail)" }
+          }
+          if (-not $j.video_test.ok) { throw "teste de vídeo falhou: $($j.video_test.detail)" }
+          Write-Host "Vídeo de teste: $($j.video_test.width)x$($j.video_test.height), $($j.video_test.duration)s, áudio=$($j.video_test.has_audio)"
       - name: Kit de Certificação de Aplicativos do Windows (WACK)
         continue-on-error: true
         timeout-minutes: 25

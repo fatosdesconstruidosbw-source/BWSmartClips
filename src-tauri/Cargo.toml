@@ -4,6 +4,7 @@ description = "BWSmartClips — app desktop de cortes virais"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 default-run = "bwsmartclips-app"
 
 [build-dependencies]

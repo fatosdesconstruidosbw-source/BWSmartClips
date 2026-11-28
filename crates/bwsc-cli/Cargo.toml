@@ -4,6 +4,7 @@ description = "Linha de comando do BWSmartClips"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "bwsmartclips"

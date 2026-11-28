@@ -1,26 +1,30 @@
-MIT License
+BWSmartClips — Todos os direitos reservados / All rights reserved.
 
-Copyright (c) 2026 BWSmartClips
+Copyright (c) 2026 [NOME DO TITULAR OU RAZÃO SOCIAL]
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+PT-BR
+Este software e seu código-fonte são proprietários e confidenciais. É proibido copiar,
+modificar, distribuir, publicar, sublicenciar, vender ou usar este código, no todo ou em
+parte, sem autorização prévia e por escrito do titular. O uso do aplicativo distribuído
+é regido pela Licença de Uso do Software (docs/legal/pt-BR/licenca-de-uso.md).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Observação: as versões 1.0.0 a 1.3.0 foram publicadas anteriormente sob a licença MIT.
+Esta mudança vale a partir da versão 1.4.0 e não altera direitos já concedidos sobre
+aquelas versões.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Componentes de terceiros seguem suas próprias licenças: veja
+docs/legal/pt-BR/avisos-de-terceiros.md e a pasta docs/legal/licencas.
 
----
-Arquivos de terceiros incluídos em crates/bwsc-core/assets:
-- seeta_fd_frontal_v1.0.bin — SeetaFace (BSD 2-Clause), ver LICENSE-SEETAFACE.txt
-- Montserrat-ExtraBold.ttf — SIL Open Font License 1.1, ver LICENSE-MONTSERRAT-OFL.txt
+EN
+This software and its source code are proprietary and confidential. Copying, modifying,
+distributing, publishing, sublicensing, selling or using this code, in whole or in part,
+without prior written permission from the owner is prohibited. Use of the distributed
+application is governed by the End-User License Agreement
+(docs/legal/en/end-user-license-agreement.md).
+
+Note: versions 1.0.0 to 1.3.0 were previously published under the MIT license. This
+change applies from version 1.4.0 onward and does not alter rights already granted for
+those versions.
+
+Third-party components are governed by their own licenses: see
+docs/legal/en/third-party-notices.md and the docs/legal/licencas folder.

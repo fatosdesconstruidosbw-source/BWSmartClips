@@ -565,7 +565,43 @@ fn self_test(out: &std::path::Path) -> ! {
     let settings = Settings::load(&Settings::default_path()).unwrap_or_default();
     let tools = Tools::locate(&settings);
     let gpu = tools.llama_gpu.as_deref().map(bwsc_core::local_ai::gpu_devices).unwrap_or_default();
+    // Executa cada ferramenta de dentro do app (no pacote MSIX elas só rodam assim).
+    let run = |exe: &Option<PathBuf>, args: &[&str]| -> serde_json::Value {
+        let Some(exe) = exe else { return serde_json::json!({"ok": false, "detail": "não encontrado"}) };
+        match bwsc_core::process::command(exe).args(args).stdin(std::process::Stdio::null()).output() {
+            Ok(o) => {
+                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                serde_json::json!({"ok": o.status.success() || !text.trim().is_empty(), "status": o.status.code(), "detail": text.lines().next().unwrap_or_default()})
+            }
+            Err(e) => serde_json::json!({"ok": false, "detail": e.to_string()}),
+        }
+    };
+    let runs = serde_json::json!({
+        "ffmpeg": run(&tools.ffmpeg, &["-hide_banner", "-version"]),
+        "ffprobe": run(&tools.ffprobe, &["-hide_banner", "-version"]),
+        "whisper": run(&tools.whisper, &["--help"]),
+        "llama": run(&tools.llama, &["--version"]),
+        "llama_gpu": run(&tools.llama_gpu, &["--list-devices"]),
+    });
+    // Vídeo de teste de 3 s gerado e lido pelas ferramentas do pacote.
+    let video = (|| -> anyhow::Result<serde_json::Value> {
+        let (Some(ff), Some(fp)) = (&tools.ffmpeg, &tools.ffprobe) else { anyhow::bail!("ffmpeg/ffprobe ausentes") };
+        let dir = std::env::temp_dir().join(format!("bwsc-selftest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let file = dir.join("teste.mp4");
+        let st = bwsc_core::process::command(ff)
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:d=3", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-shortest", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"])
+            .arg(&file)
+            .status()?;
+        anyhow::ensure!(st.success(), "ffmpeg não gerou o vídeo ({st})");
+        let info = bwsc_core::media::probe(fp, &file, &Cancel::new())?;
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(serde_json::json!({"ok": true, "width": info.width, "height": info.height, "duration": info.duration, "has_audio": info.has_audio}))
+    })()
+    .unwrap_or_else(|e| serde_json::json!({"ok": false, "detail": format!("{e:#}")}));
     let report = serde_json::json!({
+        "runs": runs,
+        "video_test": video,
         "version": env!("CARGO_PKG_VERSION"),
         "edition": bwsc_core::EDITION,
         "data_dir": bwsc_core::config::app_data_dir(),

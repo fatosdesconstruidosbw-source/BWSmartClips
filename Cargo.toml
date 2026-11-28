@@ -5,7 +5,8 @@ members = ["crates/bwsc-core", "crates/bwsc-cli", "src-tauri"]
 [workspace.package]
 version = "1.3.0"
 edition = "2021"
-license = "MIT"
+license = "LicenseRef-Proprietary"
+publish = false
 authors = ["BWSmartClips"]
 repository = "https://github.com/fatosdesconstruidosbw-source/BWSmartClips"
 

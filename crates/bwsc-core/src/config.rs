@@ -345,6 +345,7 @@ pub fn update_data_pointer() {
 /// Itens de dados do app que podem ser levados para outra pasta.
 pub const DATA_ITEMS: &[&str] = &[
     "settings.json",
+    "api-keys.dat",
     "tools",
     "models",
     "cache",
@@ -410,6 +411,11 @@ pub fn default_output_dir() -> PathBuf {
         .join("BWSmartClips")
 }
 
+/// Arquivo protegido com as chaves de API, ao lado do `settings.json`.
+fn keys_path(settings_path: &Path) -> PathBuf {
+    settings_path.with_file_name("api-keys.dat")
+}
+
 impl Settings {
     /// Pasta onde os cortes serão salvos: a escolhida pelo usuário ou a padrão.
     pub fn output_base(&self) -> PathBuf {
@@ -457,7 +463,22 @@ impl Settings {
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("não foi possível ler {}", path.display()))?;
-        let s: Self = serde_json::from_str(&text).with_context(|| format!("configuração inválida em {}", path.display()))?;
+        let mut s: Self = serde_json::from_str(&text).with_context(|| format!("configuração inválida em {}", path.display()))?;
+        let had_plain_keys = !s.openai_api_key.is_empty() || !s.anthropic_api_key.is_empty();
+        if let Ok(keys) = crate::secret::read(&keys_path(path)) {
+            if let Ok((openai, anthropic)) = serde_json::from_slice::<(String, String)>(&keys) {
+                if s.openai_api_key.is_empty() {
+                    s.openai_api_key = openai;
+                }
+                if s.anthropic_api_key.is_empty() {
+                    s.anthropic_api_key = anthropic;
+                }
+            }
+        }
+        // Chaves antigas em texto puro passam a ser guardadas protegidas.
+        if had_plain_keys {
+            let _ = s.save(path);
+        }
         s.apply();
         Ok(s)
     }
@@ -471,7 +492,17 @@ impl Settings {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let text = serde_json::to_string_pretty(self)?;
+        // As chaves de API ficam fora do JSON, protegidas pelo Windows (DPAPI).
+        let keys = keys_path(path);
+        if self.openai_api_key.is_empty() && self.anthropic_api_key.is_empty() {
+            let _ = std::fs::remove_file(&keys);
+        } else {
+            crate::secret::write(&keys, &serde_json::to_vec(&(&self.openai_api_key, &self.anthropic_api_key))?)?;
+        }
+        let mut public = self.clone();
+        public.openai_api_key.clear();
+        public.anthropic_api_key.clear();
+        let text = serde_json::to_string_pretty(&public)?;
         std::fs::write(path, text).with_context(|| format!("não foi possível salvar {}", path.display()))
     }
 }
@@ -514,5 +545,28 @@ mod output_tests {
         assert_eq!(dirs[0], PathBuf::from("/tmp/meus-cortes"));
         assert!(dirs.contains(&default_output_dir()));
         assert_eq!(dirs.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod keys_tests {
+    use super::*;
+
+    #[test]
+    fn api_keys_are_not_written_in_plain_json() {
+        let dir = std::env::temp_dir().join(format!("bwsc-keys-{}", std::process::id()));
+        let f = dir.join("settings.json");
+        let s = Settings { openai_api_key: "sk-segredo-123".into(), ..Settings::default() };
+        s.save(&f).unwrap();
+        let json = std::fs::read_to_string(&f).unwrap();
+        assert!(!json.contains("sk-segredo-123"), "chave vazou no JSON");
+        let back = Settings::load(&f).unwrap();
+        assert_eq!(back.openai_api_key, "sk-segredo-123");
+        // JSON antigo com a chave em texto puro é convertido ao carregar.
+        std::fs::write(&f, r#"{"anthropic_api_key": "sk-ant-velha"}"#).unwrap();
+        let old = Settings::load(&f).unwrap();
+        assert_eq!(old.anthropic_api_key, "sk-ant-velha");
+        assert!(!std::fs::read_to_string(&f).unwrap().contains("sk-ant-velha"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -5,6 +5,31 @@ Formato: cada versão tem uma seção `## [X.Y.Z] - AAAA-MM-DD`. O texto da seç
 
 ## [Não lançado]
 
+## [1.4.0] - 2026-11-28
+
+### Novidades
+- **Edição Microsoft Store** (pacote MSIX): compra única com licença vitalícia pela própria Store, ferramentas de vídeo e
+  IA dentro do pacote assinado pela Microsoft, nenhum programa baixado depois da instalação.
+- **Configurações → Sobre:** versão, edição, situação da licença, Política de Privacidade, Termos de Uso, Licença de
+  Uso (EULA) e avisos de licenças de terceiros, em português e inglês.
+- Aviso em cada corte de que título, nota e hashtags são gerados por IA, com botão para reportar conteúdo.
+
+### Segurança
+- Logins do YouTube, Twitch e Kick e as chaves de API (OpenAI/Anthropic) passam a ser guardados **criptografados pelo
+  Windows** (só a sua conta, neste PC, consegue abrir). Os arquivos antigos em texto puro são convertidos e apagados.
+- O app **não lê mais os cookies dos navegadores por conta própria**: só se você escolher um navegador em Avançado.
+- Ferramentas (yt-dlp, ffmpeg, Deno, whisper.cpp, llama.cpp, gerador de token) e modelos de IA só são aceitos se o
+  **SHA-256 publicado** conferir; arquivo adulterado ou corrompido é descartado.
+- Política de segurança de conteúdo (CSP) na interface; executável otimizado e sem símbolos de depuração.
+
+### Correções
+- Trabalho cancelado ou com erro não deixa mais pasta pela metade na pasta de cortes (o vídeo baixado é mantido para a
+  próxima tentativa); download interrompido é apagado.
+
+### Licença
+- A partir desta versão o BWSmartClips é **software proprietário** (todos os direitos reservados). As versões 1.0.0 a
+  1.3.0 continuam sob a licença MIT com que foram publicadas.
+
 ## [1.3.0] - 2026-11-28
 
 ### Novidades

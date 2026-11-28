@@ -597,6 +597,7 @@ pub fn adopt_legacy_settings() {
         let _ = std::fs::create_dir_all(&cur);
         if std::fs::copy(&prev, &new).is_ok() {
             let _ = rewrite_paths(&new, &old, &cur);
+            let _ = std::fs::copy(old.join("api-keys.dat"), cur.join("api-keys.dat"));
         }
     }
 }

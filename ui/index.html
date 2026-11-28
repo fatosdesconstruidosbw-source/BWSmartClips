@@ -367,15 +367,17 @@
             <div class="path-row"><label>Arquivo cookies.txt (qualquer plataforma) <input id="s-cookies" type="text" placeholder="exportado com a extensão &quot;Get cookies.txt LOCALLY&quot;" /></label><button class="secondary" data-pick="s-cookies" data-title="Escolha o arquivo cookies.txt">…</button></div>
             <label class="block">Ou ler cookies do navegador
               <select id="s-cookies-browser">
-                <option value="">Automático (tenta Firefox, Edge, Chrome…)</option>
-                <option value="firefox">Firefox (recomendado)</option>
+                <option value="">Não usar (recomendado)</option>
+                <option value="firefox">Firefox</option>
                 <option value="edge">Microsoft Edge</option>
                 <option value="chrome">Google Chrome</option>
                 <option value="brave">Brave</option>
                 <option value="opera">Opera</option>
               </select>
             </label>
-            <p class="muted small">No Windows, Chrome e Edge costumam bloquear a leitura dos cookies; prefira a conta conectada acima, o Firefox ou o cookies.txt.</p>
+            <p class="muted small">Prefira a conta conectada acima: ela fica guardada <b>criptografada</b> pelo Windows. Um arquivo cookies.txt
+              fica em texto puro (quem tiver acesso a ele entra na sua conta), e ler o navegador dá ao download acesso aos logins dele.
+              Use essas opções só se souber o que está fazendo.</p>
           </details>
         </fieldset>
         <fieldset>

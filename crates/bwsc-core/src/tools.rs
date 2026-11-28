@@ -39,7 +39,7 @@ impl Tools {
             whisper_model: find_model(&settings.whisper_model),
             vad_model: find_in_models(|n| n.starts_with("ggml-silero") && n.ends_with(".bin"), false),
             llama: find_exe("llama-server", &settings.llama_path),
-            llama_gpu: Some(tools_dir().join("llama-gpu").join(exe_name("llama-server"))).filter(|p| p.is_file()),
+            llama_gpu: find_llama_gpu(),
             llm_model: find_llm_model(&settings.llm_model),
             pot: find_pot(),
         }
@@ -103,16 +103,26 @@ pub fn find_exe(name: &str, configured: &str) -> Option<PathBuf> {
     }
     let file = exe_name(name);
     let mut dirs: Vec<PathBuf> = Vec::new();
-    let td = tools_dir();
-    dirs.push(td.clone());
-    dirs.push(td.join("whisper"));
-    dirs.push(td.join("ffmpeg"));
-    dirs.push(td.join("llama"));
+    let tool_dirs = |base: PathBuf, dirs: &mut Vec<PathBuf>| {
+        for sub in ["", "whisper", "ffmpeg", "llama"] {
+            dirs.push(if sub.is_empty() { base.clone() } else { base.join(sub) });
+        }
+    };
+    // Edição Store: só as ferramentas que vêm assinadas dentro do pacote.
+    if cfg!(feature = "store") {
+        if let Some(d) = bundled_tools_dir() {
+            tool_dirs(d, &mut dirs);
+        }
+        return dirs.into_iter().map(|d| d.join(&file)).find(|p| p.is_file());
+    }
+    tool_dirs(tools_dir(), &mut dirs);
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
             dirs.push(d.to_path_buf());
-            dirs.push(d.join("tools"));
         }
+    }
+    if let Some(d) = bundled_tools_dir() {
+        tool_dirs(d, &mut dirs);
     }
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
@@ -120,9 +130,23 @@ pub fn find_exe(name: &str, configured: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(&file)).find(|p| p.is_file())
 }
 
+/// `llama-server` com suporte a placa de vídeo (pasta `llama-gpu`).
+fn find_llama_gpu() -> Option<PathBuf> {
+    let name = exe_name("llama-server");
+    let bundled = bundled_tools_dir().map(|d| d.join("llama-gpu").join(&name));
+    let downloaded = (!cfg!(feature = "store")).then(|| tools_dir().join("llama-gpu").join(&name));
+    [bundled, downloaded].into_iter().flatten().find(|p| p.is_file())
+}
+
+/// Pasta `tools` ao lado do executável (onde o pacote da Store traz as ferramentas).
+pub fn bundled_tools_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("tools")).filter(|d| d.is_dir())
+}
+
 fn is_whisper_cpp(p: &Path) -> bool {
     // O "whisper" do Python não aceita -m; só aceitamos se estiver na pasta do app.
-    p.starts_with(tools_dir())
+    p.starts_with(tools_dir()) || bundled_tools_dir().is_some_and(|d| p.starts_with(d))
 }
 
 /// Pasta de plugins do yt-dlp mantida pelo app.

@@ -5,6 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["link-download"]
+# Edição Microsoft Store: ferramentas vêm dentro do pacote; o app nunca baixa programas.
+store = []
+# Download de vídeos por link (YouTube, Twitch, Kick) com yt-dlp.
+link-download = []
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
@@ -15,6 +22,10 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 directories = "6"
 fs4 = "0.13"
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg"] }

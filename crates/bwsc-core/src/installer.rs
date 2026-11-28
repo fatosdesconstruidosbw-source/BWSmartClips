@@ -56,15 +56,16 @@ pub const TOOLS_SIZE_MB: u64 = 380;
 /// Tamanho aproximado do llama.cpp para placa de vídeo (Vulkan).
 pub const LLAMA_GPU_SIZE_MB: u64 = 60;
 
-const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
-const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+const YTDLP_REPO: &str = "yt-dlp/yt-dlp";
+/// Espelho oficial no GitHub das versões do ffmpeg de gyan.dev (com SHA-256 publicado).
+const FFMPEG_REPO: &str = "GyanD/codexffmpeg";
 const WHISPER_REPO: &str = "ggml-org/whisper.cpp";
 const WHISPER_ASSET: &str = "whisper-bin-x64.zip";
 const LLAMA_REPO: &str = "ggml-org/llama.cpp";
 /// Gerador de "token de origem" do YouTube (permite baixar sem login na maioria dos casos).
 const POT_REPO: &str = "jim60105/bgutil-ytdlp-pot-provider-rs";
 const POT_PLUGIN_ZIP: &str = "bgutil-ytdlp-pot-provider-rs.zip";
-const DENO_URL: &str = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+const DENO_REPO: &str = "denoland/deno";
 
 pub fn whisper_model(id: &str) -> Option<&'static ModelInfo> {
     WHISPER_MODELS.iter().find(|m| m.id == id)
@@ -104,7 +105,9 @@ pub fn free_space() -> Option<u64> {
 /// Estimativa (MB) do que falta baixar para este pedido.
 pub fn estimate_mb(req: &InstallRequest) -> u64 {
     let mut mb = 0;
-    if cfg!(windows) && (req.force || !tools_dir().join("llama").join("llama-server.exe").exists()) {
+    if cfg!(feature = "store") {
+        // ferramentas já vêm no pacote
+    } else if cfg!(windows) && (req.force || !tools_dir().join("llama").join("llama-server.exe").exists()) {
         mb += TOOLS_SIZE_MB;
     } else if cfg!(windows) && !tools_dir().join("llama-gpu").join("llama-server.exe").exists() {
         mb += LLAMA_GPU_SIZE_MB;
@@ -134,7 +137,9 @@ pub fn install(req: &InstallRequest, cancel: &Cancel, on_progress: &mut dyn FnMu
     let client = client()?;
     let mut step = |name: &str, p: f32, msg: String| on_progress(InstallProgress { step: name.into(), progress: p, message: msg });
 
-    if cfg!(windows) {
+    // A edição da Microsoft Store traz as ferramentas assinadas dentro do pacote e nunca
+    // baixa programas: aqui só entram modelos (arquivos de dados).
+    if cfg!(windows) && !cfg!(feature = "store") {
         install_windows_tools(&client, req.force, cancel, &mut step)?;
     }
 
@@ -187,19 +192,26 @@ fn install_windows_tools(
 
     let ytdlp = tools.join("yt-dlp.exe");
     if force || !ytdlp.exists() {
-        download_file(client, YTDLP_URL, &ytdlp, cancel, &mut |p, d, t| step("yt-dlp", p, format!("Baixando yt-dlp… {}", fmt_progress(d, t))))?;
+        let asset = find_release_asset(client, YTDLP_REPO, |n| n == "yt-dlp.exe")?;
+        let part = tmp.join("yt-dlp.exe");
+        download_verified(client, &asset, &part, cancel, &mut |p, d, t| step("yt-dlp", p, format!("Baixando yt-dlp… {}", fmt_progress(d, t))))?;
+        std::fs::rename(&part, &ytdlp).or_else(|_| std::fs::copy(&part, &ytdlp).map(|_| ()))?;
     }
 
     if force || !tools.join("ffmpeg.exe").exists() || !tools.join("ffprobe.exe").exists() {
         let zip = tmp.join("ffmpeg.zip");
-        download_file(client, FFMPEG_URL, &zip, cancel, &mut |p, d, t| step("ffmpeg", p, format!("Baixando ffmpeg… {}", fmt_progress(d, t))))?;
+        let asset = find_release_asset(client, FFMPEG_REPO, is_ffmpeg_asset)?;
+        download_verified(client, &asset, &zip, cancel, &mut |p, d, t| step("ffmpeg", p, format!("Baixando ffmpeg… {}", fmt_progress(d, t))))?;
         step("ffmpeg", 1.0, "Extraindo ffmpeg…".into());
         extract_named(&zip, &tools, &["ffmpeg.exe", "ffprobe.exe"])?;
     }
 
     if force || !tools.join("deno.exe").exists() {
         let zip = tmp.join("deno.zip");
-        match download_file(client, DENO_URL, &zip, cancel, &mut |p, d, t| step("deno", p, format!("Baixando Deno (para o YouTube)… {}", fmt_progress(d, t)))) {
+        let res = find_release_asset(client, DENO_REPO, |n| n == "deno-x86_64-pc-windows-msvc.zip").and_then(|asset| {
+            download_verified(client, &asset, &zip, cancel, &mut |p, d, t| step("deno", p, format!("Baixando Deno (para o YouTube)… {}", fmt_progress(d, t))))
+        });
+        match res {
             Ok(()) => extract_named(&zip, &tools, &["deno.exe"])?,
             Err(e) if e.downcast_ref::<Cancelled>().is_some() => return Err(e),
             Err(_) => step("deno", 1.0, "Não foi possível baixar o Deno (opcional)".into()),
@@ -209,10 +221,10 @@ fn install_windows_tools(
     let whisper_dir = tools.join("whisper");
     if force || !whisper_dir.join("whisper-cli.exe").exists() {
         step("whisper", 0.0, "Procurando a versão mais recente do whisper.cpp…".into());
-        let url = find_release_asset(client, WHISPER_REPO, |n| n == WHISPER_ASSET)
+        let asset = find_release_asset(client, WHISPER_REPO, |n| n == WHISPER_ASSET)
             .context("não foi possível encontrar o pacote do whisper.cpp para Windows")?;
         let zip = tmp.join("whisper.zip");
-        download_file(client, &url, &zip, cancel, &mut |p, d, t| step("whisper", p, format!("Baixando whisper.cpp… {}", fmt_progress(d, t))))?;
+        download_verified(client, &asset, &zip, cancel, &mut |p, d, t| step("whisper", p, format!("Baixando whisper.cpp… {}", fmt_progress(d, t))))?;
         step("whisper", 1.0, "Extraindo whisper.cpp…".into());
         std::fs::create_dir_all(&whisper_dir)?;
         extract_flat(&zip, &whisper_dir, &[".exe", ".dll"])?;
@@ -224,10 +236,10 @@ fn install_windows_tools(
     let llama_dir = tools.join("llama");
     if force || !llama_dir.join("llama-server.exe").exists() {
         step("llama", 0.0, "Procurando a versão mais recente do llama.cpp…".into());
-        let url = find_release_asset(client, LLAMA_REPO, is_llama_cpu_asset)
+        let asset = find_release_asset(client, LLAMA_REPO, is_llama_cpu_asset)
             .context("não foi possível encontrar o pacote do llama.cpp para Windows")?;
         let zip = tmp.join("llama.zip");
-        download_file(client, &url, &zip, cancel, &mut |p, d, t| step("llama", p, format!("Baixando llama.cpp (IA local)… {}", fmt_progress(d, t))))?;
+        download_verified(client, &asset, &zip, cancel, &mut |p, d, t| step("llama", p, format!("Baixando llama.cpp (IA local)… {}", fmt_progress(d, t))))?;
         step("llama", 1.0, "Extraindo llama.cpp…".into());
         std::fs::create_dir_all(&llama_dir)?;
         extract_flat(&zip, &llama_dir, &[".exe", ".dll"])?;
@@ -240,9 +252,9 @@ fn install_windows_tools(
     if force || !gpu_dir.join("llama-server.exe").exists() {
         step("llama-gpu", 0.0, "Procurando o llama.cpp para placa de vídeo…".into());
         let res = (|| -> Result<()> {
-            let url = find_release_asset(client, LLAMA_REPO, is_llama_vulkan_asset).context("pacote Vulkan do llama.cpp não encontrado")?;
+            let asset = find_release_asset(client, LLAMA_REPO, is_llama_vulkan_asset).context("pacote Vulkan do llama.cpp não encontrado")?;
             let zip = tmp.join("llama-gpu.zip");
-            download_file(client, &url, &zip, cancel, &mut |p, d, t| {
+            download_verified(client, &asset, &zip, cancel, &mut |p, d, t| {
                 step("llama-gpu", p, format!("Baixando llama.cpp para placa de vídeo… {}", fmt_progress(d, t)))
             })?;
             std::fs::create_dir_all(&gpu_dir)?;
@@ -289,21 +301,21 @@ fn install_pot(
     step: &mut dyn FnMut(&str, f32, String),
 ) -> Result<()> {
     step("token", 0.0, "Procurando o gerador de token do YouTube…".into());
-    let bin_url = find_release_asset(client, POT_REPO, is_pot_binary)?;
-    let plugin_url = find_release_asset(client, POT_REPO, is_pot_plugin)?;
+    let bin = find_release_asset(client, POT_REPO, is_pot_binary)?;
+    let plugin = find_release_asset(client, POT_REPO, is_pot_plugin)?;
     let exe = tools.join("bgutil-pot.exe");
-    if bin_url.to_lowercase().ends_with(".zip") {
+    if bin.url.to_lowercase().ends_with(".zip") {
         let zip = tmp.join("pot-bin.zip");
-        download_file(client, &bin_url, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
+        download_verified(client, &bin, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
         let found = extract_first_exe(&zip, &exe)?;
         if !found {
             bail!("o pacote não contém o executável");
         }
     } else {
-        download_file(client, &bin_url, &exe, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
+        download_verified(client, &bin, &exe, cancel, &mut |p, d, t| step("token", p, format!("Baixando token do YouTube… {}", fmt_progress(d, t))))?;
     }
     let zip = tmp.join("pot-plugin.zip");
-    download_file(client, &plugin_url, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando plugin do yt-dlp… {}", fmt_progress(d, t))))?;
+    download_verified(client, &plugin, &zip, cancel, &mut |p, d, t| step("token", p, format!("Baixando plugin do yt-dlp… {}", fmt_progress(d, t))))?;
     install_plugin_zip(&zip, &crate::tools::ytdlp_plugins_dir(), crate::tools::POT_PLUGIN)
 }
 
@@ -360,7 +372,14 @@ fn extract_first_exe(zip_path: &Path, dest: &Path) -> Result<bool> {
 /// Procura, da versão mais nova para a mais antiga (incluindo pré-lançamentos/builds
 /// numerados), o primeiro arquivo que satisfaz `want`. Alguns projetos publicam os
 /// executáveis só nos builds numerados, e não na versão marcada como "latest".
-fn find_release_asset(client: &reqwest::blocking::Client, repo: &str, want: fn(&str) -> bool) -> Result<String> {
+/// Arquivo publicado numa versão do GitHub, com o SHA-256 que o próprio GitHub calculou.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asset {
+    pub url: String,
+    pub sha256: Option<String>,
+}
+
+fn find_release_asset(client: &reqwest::blocking::Client, repo: &str, want: fn(&str) -> bool) -> Result<Asset> {
     let url = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
     let mut req = client.get(&url).header("Accept", "application/vnd.github+json");
     // No CI usamos o token para não esbarrar no limite de consultas anônimas.
@@ -375,13 +394,52 @@ fn find_release_asset(client: &reqwest::blocking::Client, repo: &str, want: fn(&
     pick_asset(&releases, want).with_context(|| format!("nenhuma versão recente de {repo} tem o pacote para Windows"))
 }
 
-pub fn pick_asset(releases: &serde_json::Value, want: fn(&str) -> bool) -> Option<String> {
+pub fn pick_asset(releases: &serde_json::Value, want: fn(&str) -> bool) -> Option<Asset> {
     releases.as_array()?.iter().filter(|r| r["draft"] != true).find_map(|r| {
         r["assets"].as_array()?.iter().find_map(|a| {
             let name = a["name"].as_str()?;
-            want(name).then(|| a["browser_download_url"].as_str().map(str::to_string)).flatten()
+            if !want(name) {
+                return None;
+            }
+            let url = a["browser_download_url"].as_str()?.to_string();
+            let sha256 = a["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).map(str::to_lowercase);
+            Some(Asset { url, sha256 })
         })
     })
+}
+
+/// SHA-256 de um arquivo, em hexadecimal.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut f = File::open(path)?;
+    let mut h = Sha256::new();
+    std::io::copy(&mut f, &mut h)?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Baixa e confere o SHA-256 publicado. Arquivo adulterado ou corrompido é apagado e o
+/// download falha: nada é executado sem conferência.
+fn download_verified(
+    client: &reqwest::blocking::Client,
+    asset: &Asset,
+    dest: &Path,
+    cancel: &Cancel,
+    on_progress: &mut dyn FnMut(f32, u64, u64),
+) -> Result<()> {
+    let Some(expected) = &asset.sha256 else {
+        bail!("{} não tem SHA-256 publicado; por segurança o arquivo não foi baixado", asset.url);
+    };
+    download_file(client, &asset.url, dest, cancel, on_progress)?;
+    let got = sha256_file(dest)?;
+    if &got != expected {
+        let _ = std::fs::remove_file(dest);
+        bail!("o arquivo baixado de {} não confere (SHA-256 diferente do publicado); download descartado", asset.url);
+    }
+    Ok(())
+}
+
+fn is_ffmpeg_asset(name: &str) -> bool {
+    name.starts_with("ffmpeg-") && name.ends_with("-essentials_build.zip")
 }
 
 fn is_llama_cpu_asset(name: &str) -> bool {
@@ -726,9 +784,9 @@ mod tests {
         let rels = serde_json::json!([{"assets": [
             {"name": "llama-b9000-bin-win-cuda-12.4-x64.zip", "browser_download_url": "u1"},
             {"name": "llama-b9000-bin-win-cpu-arm64.zip", "browser_download_url": "u2"},
-            {"name": "llama-b9000-bin-win-cpu-x64.zip", "browser_download_url": "u3"}
+            {"name": "llama-b9000-bin-win-cpu-x64.zip", "browser_download_url": "u3", "digest": "sha256:ABC123"}
         ]}]);
-        assert_eq!(pick_asset(&rels, is_llama_cpu_asset).as_deref(), Some("u3"));
+        assert_eq!(pick_asset(&rels, is_llama_cpu_asset), Some(Asset { url: "u3".into(), sha256: Some("abc123".into()) }));
         assert_eq!(pick_asset(&rels, is_llama_vulkan_asset), None);
     }
 
@@ -744,7 +802,7 @@ mod tests {
                 {"name": "whisper-bin-x64.zip", "browser_download_url": "certo"}
             ]}
         ]);
-        assert_eq!(pick_asset(&rels, |n| n == WHISPER_ASSET).as_deref(), Some("certo"));
+        assert_eq!(pick_asset(&rels, |n| n == WHISPER_ASSET).map(|a| a.url).as_deref(), Some("certo"));
     }
 
     #[test]
@@ -762,16 +820,28 @@ mod tests {
     fn live_release_lookup() {
         let c = client().unwrap();
         let w = find_release_asset(&c, WHISPER_REPO, |n| n == WHISPER_ASSET).unwrap();
-        assert!(w.ends_with("/whisper-bin-x64.zip"), "{w}");
+        assert!(w.url.ends_with("/whisper-bin-x64.zip"), "{w:?}");
         let l = find_release_asset(&c, LLAMA_REPO, is_llama_cpu_asset).unwrap();
-        assert!(l.contains("bin-win-cpu-x64") && l.ends_with(".zip"), "{l}");
+        assert!(l.url.contains("bin-win-cpu-x64") && l.url.ends_with(".zip"), "{l:?}");
         let v = find_release_asset(&c, LLAMA_REPO, is_llama_vulkan_asset).unwrap();
-        assert!(v.contains("bin-win-vulkan-x64") && v.ends_with(".zip"), "{v}");
-        for url in [&w, &l, &v] {
-            let r = c.head(url.as_str()).send().unwrap();
-            assert!(r.status().is_success(), "{url}: {}", r.status());
+        assert!(v.url.contains("bin-win-vulkan-x64") && v.url.ends_with(".zip"), "{v:?}");
+        let f = find_release_asset(&c, FFMPEG_REPO, is_ffmpeg_asset).unwrap();
+        let y = find_release_asset(&c, YTDLP_REPO, |n| n == "yt-dlp.exe").unwrap();
+        let d = find_release_asset(&c, DENO_REPO, |n| n == "deno-x86_64-pc-windows-msvc.zip").unwrap();
+        for a in [&w, &l, &v, &f, &y, &d] {
+            eprintln!("{} sha256={:?}", a.url, a.sha256);
+            assert!(a.sha256.as_ref().is_some_and(|h| h.len() == 64), "sem SHA-256 publicado: {}", a.url);
+            let r = c.head(a.url.as_str()).send().unwrap();
+            assert!(r.status().is_success(), "{}: {}", a.url, r.status());
         }
-        eprintln!("whisper: {w}\nllama: {l}\nllama vulkan: {v}");
+        // Confere de verdade um download pequeno (yt-dlp) contra o SHA-256 publicado.
+        let tmp0 = std::env::temp_dir().join(format!("bwsc-verify-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp0).unwrap();
+        download_verified(&c, &y, &tmp0.join("yt-dlp.exe"), &Cancel::new(), &mut |_, _, _| {}).unwrap();
+        let bad = Asset { url: y.url.clone(), sha256: Some("0".repeat(64)) };
+        assert!(download_verified(&c, &bad, &tmp0.join("x.exe"), &Cancel::new(), &mut |_, _, _| {}).is_err());
+        assert!(!tmp0.join("x.exe").exists(), "arquivo que não confere é apagado");
+        let _ = std::fs::remove_dir_all(&tmp0);
         // Gerador de token do YouTube: mostra os arquivos publicados se não achar.
         let rels: serde_json::Value = c
             .get(format!("https://api.github.com/repos/{POT_REPO}/releases?per_page=5"))
@@ -786,13 +856,13 @@ mod tests {
         eprintln!("pot assets: {names:?}");
         let b = pick_asset(&rels, is_pot_binary).unwrap_or_else(|| panic!("sem binário Windows: {names:?}"));
         let p = pick_asset(&rels, is_pot_plugin).unwrap_or_else(|| panic!("sem plugin: {names:?}"));
-        eprintln!("pot: {b}\nplugin: {p}");
+        eprintln!("pot: {b:?}\nplugin: {p:?}");
 
         // Instala de verdade numa pasta temporária e confere a estrutura do plugin.
         let tmp = std::env::temp_dir().join(format!("bwsc-pot-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let zip = tmp.join("plugin.zip");
-        download_file(&c, &p, &zip, &Cancel::new(), &mut |_, _, _| {}).unwrap();
+        download_verified(&c, &p, &zip, &Cancel::new(), &mut |_, _, _| {}).unwrap();
         install_plugin_zip(&zip, &tmp.join("plugins"), crate::tools::POT_PLUGIN).unwrap();
         assert!(tmp.join("plugins").join(crate::tools::POT_PLUGIN).join("yt_dlp_plugins").is_dir());
         let _ = std::fs::remove_dir_all(&tmp);

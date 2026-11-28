@@ -151,6 +151,12 @@ pub fn run_job(
 
     // 1) Fonte
     let (source_file, title, project_dir) = match source {
+        Source::Url(_) if !crate::EDITION.link_download => {
+            anyhow::bail!(
+                "Esta edição não baixa vídeos de links. Use um arquivo de vídeo do seu computador \
+                 (por exemplo, a gravação da sua live ou o vídeo baixado pelo YouTube Studio)."
+            )
+        }
         Source::Url(url) => match download_cache.downloaded(url) {
             Some((file, title)) => {
                 report(on_progress, Stage::Download, 1.0, "Vídeo já baixado antes — reaproveitando");
@@ -162,26 +168,34 @@ pub fn run_job(
                 let dir = base.join(format!("{stamp}-download"));
                 report(on_progress, Stage::Download, 0.0, format!("Baixando do {}…", download::platform(url)));
                 let cookies = settings.youtube_cookies_file.trim();
+                let id = download::platform_id(url);
+                // O login salvo fica protegido; só vira arquivo legível durante o download.
+                let temp_login = if id.is_empty() { None } else { crate::secret::TempLogin::open(id, &crate::config::cache_dir().join("tmp")) };
                 let cookies_file = Some(PathBuf::from(cookies))
                     .filter(|p| !cookies.is_empty() && p.is_file())
-                    .or_else(|| {
-                        let id = download::platform_id(url);
-                        Some(crate::config::login_cookies_path(id)).filter(|p| !id.is_empty() && p.is_file())
-                    });
+                    .or_else(|| temp_login.as_ref().map(|t| t.path().to_path_buf()));
                 let auth = download::Auth {
                     cookies_file,
                     browser: Some(settings.cookies_browser.trim().to_string()).filter(|b| !b.is_empty()),
                     pot: tools.pot.clone(),
                 };
                 let site = download::platform(url);
-                let d = download::download(&ytdlp, &ffmpeg, url, &dir, &auth, cancel, |p, m| {
+                let downloaded = download::download(&ytdlp, &ffmpeg, url, &dir, &auth, cancel, |p, m| {
                     let msg = if m.contains("pediu login") {
                         m.to_string()
                     } else {
                         format!("Baixando do {site}… {:.0}%", p * 100.0)
                     };
                     report(on_progress, Stage::Download, p, msg)
-                })?;
+                });
+                let d = match downloaded {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // Download cancelado ou com erro: não deixa vídeo pela metade na pasta de cortes.
+                        let _ = std::fs::remove_dir_all(&dir);
+                        return Err(e);
+                    }
+                };
                 let final_dir = base.join(format!("{stamp}-{}", slug(&d.title, 40)));
                 let (file, dir) = match std::fs::rename(&dir, &final_dir) {
                     Ok(()) => (final_dir.join(d.path.file_name().unwrap_or_default()), final_dir),
@@ -202,6 +216,9 @@ pub fn run_job(
     };
     std::fs::create_dir_all(&project_dir)
         .with_context(|| format!("não foi possível criar a pasta {}", project_dir.display()))?;
+    // Se o trabalho for cancelado ou falhar daqui em diante, apaga o que ficou pela metade
+    // (mantém só o vídeo baixado, que é reaproveitado na próxima tentativa).
+    let mut cleanup = Cleanup { dir: project_dir.clone(), keep: Some(source_file.clone()), done: false };
     let work = project_dir.join(".work");
     std::fs::create_dir_all(&work)?;
     let src_key = source_key(&source_file).unwrap_or_else(|| stamp.clone());
@@ -290,8 +307,42 @@ pub fn run_job(
     let result = JobResult { project_dir: project_dir.clone(), source_title: title, source_file, clips, warnings };
     std::fs::write(project_dir.join("cortes.json"), serde_json::to_string_pretty(&result)?)?;
     let _ = std::fs::remove_dir_all(&work);
+    cleanup.done = true;
     report(on_progress, Stage::Done, 1.0, format!("{} cortes prontos!", result.clips.len()));
     Ok(result)
+}
+
+/// Apaga a pasta de um projeto que não terminou (veja `run_job`).
+struct Cleanup {
+    dir: PathBuf,
+    /// Arquivo que deve ficar (o vídeo baixado), se estiver dentro da pasta.
+    keep: Option<PathBuf>,
+    done: bool,
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        let keep = self.keep.as_ref().filter(|k| k.starts_with(&self.dir) && k.is_file());
+        match keep {
+            None => {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+            Some(k) => {
+                if let Ok(rd) = std::fs::read_dir(&self.dir) {
+                    for e in rd.filter_map(|e| e.ok()) {
+                        let p = e.path();
+                        if &p == k {
+                            continue;
+                        }
+                        let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Escolhe os cortes. Devolve também se a IA foi usada (`false` = plano B por regras).
@@ -471,5 +522,24 @@ mod tests {
     fn source_parse() {
         assert!(matches!(Source::parse(" https://youtu.be/x "), Source::Url(_)));
         assert!(matches!(Source::parse("\"C:\\v.mp4\""), Source::File(_)));
+    }
+
+    #[test]
+    fn cleanup_removes_unfinished_project_but_keeps_download() {
+        let base = std::env::temp_dir().join(format!("bwsc-cleanup-{}", std::process::id()));
+        let (a, b) = (base.join("a"), base.join("b"));
+        std::fs::create_dir_all(a.join(".work")).unwrap();
+        std::fs::write(a.join("transcricao.json"), "{}").unwrap();
+        drop(Cleanup { dir: a.clone(), keep: Some(PathBuf::from("/fora/video.mp4")), done: false });
+        assert!(!a.exists(), "projeto com arquivo local some inteiro");
+        std::fs::create_dir_all(b.join(".work")).unwrap();
+        std::fs::write(b.join("source.mp4"), "v").unwrap();
+        std::fs::write(b.join("corte-01.mp4"), "x").unwrap();
+        drop(Cleanup { dir: b.clone(), keep: Some(b.join("source.mp4")), done: false });
+        assert!(b.join("source.mp4").is_file() && !b.join(".work").exists() && !b.join("corte-01.mp4").exists());
+        std::fs::create_dir_all(a.join(".work")).unwrap();
+        drop(Cleanup { dir: a.clone(), keep: None, done: true });
+        assert!(a.join(".work").exists(), "trabalho concluído não é apagado");
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

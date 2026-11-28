@@ -536,6 +536,8 @@ fn main() {
     // Os dados ficam na pasta onde o programa foi instalado (ver config::app_data_dir).
     bwsc_core::config::update_data_pointer();
     installer::adopt_legacy_settings();
+    // Logins antigos em texto puro passam a ser guardados protegidos.
+    bwsc_core::secret::migrate_plain_logins();
     let settings = Settings::load(&Settings::default_path()).unwrap_or_default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

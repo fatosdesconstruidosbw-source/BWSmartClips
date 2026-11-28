@@ -303,6 +303,11 @@ fn resolve_data_dir() -> PathBuf {
     if let Some(v) = std::env::var_os("BWSMARTCLIPS_DATA").filter(|v| !v.is_empty()) {
         return PathBuf::from(v);
     }
+    // Edição Store: a pasta de dados do pacote (o Windows a leva junto se o app for
+    // movido para outro disco em Configurações → Aplicativos → Mover).
+    if cfg!(feature = "store") {
+        return legacy_data_dir();
+    }
     // Os dados ficam junto do programa: instalou no D:, tudo fica no D:.
     if let Some(dir) = installed_dir() {
         return dir;
@@ -324,6 +329,9 @@ pub fn app_data_dir() -> PathBuf {
 
 /// Grava (ou apaga) o apontador na pasta padrão para a linha de comando achar os dados.
 pub fn update_data_pointer() {
+    if cfg!(feature = "store") {
+        return;
+    }
     let (cur, legacy) = (app_data_dir(), legacy_data_dir());
     let ptr = legacy.join(DATA_POINTER);
     if cur == legacy {
@@ -335,7 +343,19 @@ pub fn update_data_pointer() {
 }
 
 /// Itens de dados do app que podem ser levados para outra pasta.
-pub const DATA_ITEMS: &[&str] = &["settings.json", "tools", "models", "cache", "logs", "youtube-cookies.txt", "twitch-cookies.txt", "kick-cookies.txt"];
+pub const DATA_ITEMS: &[&str] = &[
+    "settings.json",
+    "tools",
+    "models",
+    "cache",
+    "logs",
+    "youtube-login.dat",
+    "twitch-login.dat",
+    "kick-login.dat",
+    "youtube-cookies.txt",
+    "twitch-cookies.txt",
+    "kick-cookies.txt",
+];
 
 /// Onde ficam ffmpeg, yt-dlp, whisper-cli baixados pelo instalador do app.
 pub fn tools_dir() -> PathBuf {
@@ -377,10 +397,6 @@ pub fn find_model_file(name: &str) -> Option<PathBuf> {
     models_search_dirs().into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// Cookies salvos pelo login feito dentro do app (`youtube`, `twitch` ou `kick`).
-pub fn login_cookies_path(platform: &str) -> PathBuf {
-    app_data_dir().join(format!("{platform}-cookies.txt"))
-}
 
 /// Cache de transcrições, análises e downloads.
 pub fn cache_dir() -> PathBuf {

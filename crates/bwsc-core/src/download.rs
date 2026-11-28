@@ -113,11 +113,6 @@ pub fn platform(url: &str) -> &'static str {
     platform_name(platform_id(url))
 }
 
-/// Navegadores tentados automaticamente quando o YouTube pede login.
-/// O Firefox vem primeiro: no Windows, Chrome/Edge criptografam os cookies de um
-/// jeito que o yt-dlp muitas vezes não consegue ler.
-const AUTO_BROWSERS: &[&str] = &["firefox", "edge", "chrome", "brave", "opera"];
-
 pub fn is_bot_check(err: &str) -> bool {
     let e = err.to_lowercase();
     e.contains("not a bot")
@@ -132,8 +127,9 @@ pub fn is_bot_check(err: &str) -> bool {
 
 /// Baixa `url` para `dir`, informando o progresso (0.0–1.0).
 ///
-/// No YouTube, tenta nesta ordem: sem login (com token de origem, se instalado) →
-/// login salvo / cookies.txt → cookies dos navegadores. Se nada funcionar, devolve
+/// Tenta nesta ordem: sem login (com token de origem, se instalado) → login salvo /
+/// cookies.txt → cookies do navegador **só se o usuário escolheu um** nas configurações
+/// (o app nunca lê navegadores por conta própria). Se nada funcionar, devolve
 /// [`YoutubeLoginRequired`] para a interface oferecer o login dentro do app.
 #[allow(clippy::too_many_arguments)]
 pub fn download(
@@ -151,10 +147,6 @@ pub fn download(
     }
     if let Some(b) = &auth.browser {
         plan.push((Auth { cookies_file: None, browser: Some(b.clone()), pot: None }, Some(format!("usando os cookies do {b}"))));
-    } else if auth.cookies_file.is_none() {
-        for b in AUTO_BROWSERS {
-            plan.push((Auth { cookies_file: None, browser: Some(b.to_string()), pot: None }, Some(format!("tentando os cookies do {b}"))));
-        }
     }
 
     let mut last = String::new();

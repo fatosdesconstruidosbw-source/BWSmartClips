@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use bwsc_core::config::login_cookies_path;
+use bwsc_core::secret;
 use serde::Serialize;
 use tauri::webview::Cookie;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
@@ -73,16 +73,12 @@ pub struct AccountStatus {
 pub fn status() -> Vec<AccountStatus> {
     PLATFORMS
         .iter()
-        .map(|p| AccountStatus { id: p.id, name: p.name, connected: login_cookies_path(p.id).is_file() })
+        .map(|p| AccountStatus { id: p.id, name: p.name, connected: secret::has_login(p.id) })
         .collect()
 }
 
 pub fn logout(id: &str) -> std::io::Result<()> {
-    let path = login_cookies_path(id);
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
-    Ok(())
+    secret::delete_login(id)
 }
 
 /// Abre a janela de login (ou traz para frente) e começa a vigiar os cookies.
@@ -112,7 +108,7 @@ fn watch(app: AppHandle, p: &'static Platform) {
     loop {
         std::thread::sleep(Duration::from_millis(1500));
         let Some(win) = app.get_webview_window(&label(p)) else {
-            if !login_cookies_path(p.id).is_file() {
+            if !secret::has_login(p.id) {
                 emit(false, format!("Login no {} cancelado.", p.name));
             }
             return;
@@ -126,7 +122,8 @@ fn watch(app: AppHandle, p: &'static Platform) {
         cookies.sort_by(|a, b| (a.domain(), a.name()).cmp(&(b.domain(), b.name())));
         cookies.dedup_by(|a, b| a.domain() == b.domain() && a.name() == b.name());
         if cookies.iter().any(|c| p.login_cookies.contains(&c.name())) {
-            let result = std::fs::write(login_cookies_path(p.id), netscape(&cookies));
+            // Salvo protegido pelo Windows (DPAPI): só esta conta, neste PC, consegue abrir.
+            let result = secret::save_login(p.id, &netscape(&cookies));
             let _ = win.close();
             match result {
                 Ok(()) => emit(true, format!("Conectado ao {} ✔", p.name)),

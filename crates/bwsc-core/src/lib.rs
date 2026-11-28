@@ -23,6 +23,18 @@ pub mod media;
 pub mod pipeline;
 pub mod process;
 pub mod render;
+pub mod secret;
+
+/// Edição compilada: o que este executável pode fazer.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct Edition {
+    /// Edição Microsoft Store (ferramentas embutidas, licença pela Store).
+    pub store: bool,
+    /// Baixa vídeos de links (YouTube, Twitch, Kick).
+    pub link_download: bool,
+}
+
+pub const EDITION: Edition = Edition { store: cfg!(feature = "store"), link_download: cfg!(feature = "link-download") };
 pub mod selector;
 pub mod tools;
 pub mod transcribe;

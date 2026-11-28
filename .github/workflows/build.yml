@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, loja-microsoft]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -24,6 +24,10 @@ jobs:
         run: cargo test -p bwsc-core -p bwsc-cli
       - name: Clippy
         run: cargo clippy -p bwsc-core -p bwsc-cli --all-targets -- -D warnings
+      - name: Edição Microsoft Store (núcleo)
+        run: |
+          cargo test -p bwsc-core --no-default-features --features store
+          cargo clippy -p bwsc-core --no-default-features --features store --all-targets -- -D warnings
 
   windows:
     name: Instalador Windows

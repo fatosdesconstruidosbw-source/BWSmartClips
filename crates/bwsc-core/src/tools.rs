@@ -96,7 +96,8 @@ fn exe_name(name: &str) -> String {
 
 /// Procura: caminho configurado → pasta de ferramentas do app → pasta do executável → PATH.
 pub fn find_exe(name: &str, configured: &str) -> Option<PathBuf> {
-    let configured = configured.trim();
+    // Edição Store: caminhos manuais são ignorados; só rodam as ferramentas do pacote.
+    let configured = if cfg!(feature = "store") { "" } else { configured.trim() };
     if !configured.is_empty() {
         let p = PathBuf::from(configured);
         return p.is_file().then_some(p);

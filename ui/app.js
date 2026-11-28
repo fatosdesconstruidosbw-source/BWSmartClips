@@ -1062,6 +1062,8 @@ async function loadEdition(recheck = false) {
       "A gravação da sua live ou o vídeo do seu canal baixado pelo YouTube Studio servem.";
   }
   if (e.store) {
+    // Na edição Store só rodam as ferramentas assinadas que vêm no pacote.
+    $("manual-paths").classList.add("hidden");
     $("data-dir-hint").innerHTML = "Configurações, modelos baixados e cache ficam na pasta do app no Windows. Para levar tudo para outro disco, use " +
       "<b>Configurações do Windows → Aplicativos → BWSmartClips → Mover</b>. Os modelos também podem ficar em outra pasta (abaixo).";
   }

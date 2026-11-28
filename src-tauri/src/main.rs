@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accounts;
+mod license;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -382,6 +383,11 @@ struct JobError {
 
 #[tauri::command]
 fn start_job(app: AppHandle, state: State<AppState>, source: String, options: ClipOptions) -> CmdResult<String> {
+    // Edição Store: só quem tem a licença usa (a verificação fica no lado nativo, não na tela).
+    let lic = license::status(false);
+    if lic.required && !lic.ok {
+        return Err(lic.message);
+    }
     if source.trim().is_empty() {
         return Err("Informe um link ou escolha um arquivo de vídeo.".into());
     }
@@ -526,13 +532,60 @@ fn open_output_dir(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(err)
 }
 
+#[derive(Serialize)]
+struct EditionInfo {
+    version: &'static str,
+    edition: bwsc_core::Edition,
+    license: license::LicenseStatus,
+}
+
+/// Edição do app (Store ou direta), o que ela permite e a situação da licença.
+#[tauri::command]
+async fn edition_info(recheck: bool) -> EditionInfo {
+    let license = tauri::async_runtime::spawn_blocking(move || license::status(recheck)).await.unwrap_or_else(|_| license::status(false));
+    EditionInfo { version: env!("CARGO_PKG_VERSION"), edition: bwsc_core::EDITION, license }
+}
+
+/// Abre a página do BWSmartClips na Microsoft Store.
+#[tauri::command]
+fn open_store(app: AppHandle) -> CmdResult<()> {
+    app.opener().open_url(license::store_url(), None::<&str>).map_err(err)
+}
+
 /// Pasta que o app usa quando o usuário não escolhe uma.
 #[tauri::command]
 fn default_output_dir() -> String {
     bwsc_core::config::default_output_dir().to_string_lossy().into_owned()
 }
 
+/// `--self-test <arquivo.json>`: confere ferramentas, pasta de dados e licença sem abrir a
+/// janela (usado no teste automático do pacote da Store).
+fn self_test(out: &std::path::Path) -> ! {
+    let settings = Settings::load(&Settings::default_path()).unwrap_or_default();
+    let tools = Tools::locate(&settings);
+    let gpu = tools.llama_gpu.as_deref().map(bwsc_core::local_ai::gpu_devices).unwrap_or_default();
+    let report = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "edition": bwsc_core::EDITION,
+        "data_dir": bwsc_core::config::app_data_dir(),
+        "exe": std::env::current_exe().ok(),
+        "tools": tools,
+        "gpu_devices": gpu,
+        "license": license::status(true),
+    });
+    let code = match std::fs::write(out, serde_json::to_string_pretty(&report).unwrap_or_default()) {
+        Ok(()) => 0,
+        Err(_) => 2,
+    };
+    std::process::exit(code)
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--self-test") {
+        let out = args.get(i + 1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("bwsmartclips-self-test.json"));
+        self_test(&out);
+    }
     // Os dados ficam na pasta onde o programa foi instalado (ver config::app_data_dir).
     bwsc_core::config::update_data_pointer();
     installer::adopt_legacy_settings();
@@ -571,6 +624,8 @@ fn main() {
             log_path,
             list_projects,
             default_output_dir,
+            edition_info,
+            open_store,
             move_models,
             migrate_data,
             gpu_info,

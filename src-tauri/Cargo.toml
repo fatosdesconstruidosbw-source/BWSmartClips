@@ -9,11 +9,20 @@ default-run = "bwsmartclips-app"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = ["link-download"]
+# Edição Microsoft Store (ferramentas no pacote + licença da Store).
+store = ["bwsc-core/store"]
+link-download = ["bwsc-core/link-download"]
+
 [dependencies]
-bwsc-core = { path = "../crates/bwsc-core" }
+bwsc-core = { path = "../crates/bwsc-core", default-features = false }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["ApplicationModel", "Foundation", "Services_Store", "Win32_System_WinRT"] }

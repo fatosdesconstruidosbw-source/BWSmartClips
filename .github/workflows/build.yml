@@ -119,3 +119,84 @@ jobs:
           files: |
             out/instalador/*
             out/cli/*
+
+  store:
+    name: Pacote Microsoft Store (MSIX)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: store
+      - name: Minificar a interface
+        shell: pwsh
+        run: |
+          npx --yes esbuild@0.24.2 ui/app.js --minify --outfile=ui/app.js --allow-overwrite
+          npx --yes esbuild@0.24.2 ui/style.css --minify --outfile=ui/style.css --allow-overwrite
+      - name: Instalar tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Compilar edição Store
+        env:
+          BWSC_STORE_ID: ${{ vars.STORE_ID }}
+        run: cargo tauri build --no-bundle --features store -- --no-default-features
+      - name: Montar MSIX
+        id: msix
+        shell: pwsh
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $exe = Get-ChildItem target/release -File -Filter *.exe | Where-Object { $_.Name -match '^(bwsmartclips-app|BWSmartClips)\.exe$' } | Select-Object -First 1
+          if (-not $exe) { Get-ChildItem target/release -File -Filter *.exe; throw "executável da edição Store não encontrado" }
+          $name = "${{ vars.STORE_IDENTITY_NAME }}"; if (-not $name) { $name = "BWSmartClips.Teste" }
+          $pub = "${{ vars.STORE_PUBLISHER }}"; if (-not $pub) { $pub = "CN=BWSmartClips Teste" }
+          $disp = "${{ vars.STORE_PUBLISHER_DISPLAY_NAME }}"; if (-not $disp) { $disp = "BWSmartClips" }
+          ./store/build-msix.ps1 -AppExe $exe.FullName -Version $ver -IdentityName $name -Publisher $pub -PublisherDisplayName $disp -TestSign
+      - name: Instalar o pacote e rodar o autoteste
+        shell: pwsh
+        run: |
+          $cer = Get-ChildItem out/store -Filter *.cer | Select-Object -First 1
+          Import-Certificate -FilePath $cer.FullName -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          Invoke-WebRequest https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx -OutFile vclibs.appx -UseBasicParsing
+          $pkg = Get-ChildItem out/store -Filter *TESTE-assinado.msix | Select-Object -First 1
+          Add-AppxPackage -Path $pkg.FullName -DependencyPath vclibs.appx
+          Get-AppxPackage *BWSmartClips* | Format-List Name, Version, InstallLocation, Status
+          $out = Join-Path $env:RUNNER_TEMP "selftest.json"
+          $alias = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\bwsmartclips.exe"
+          Start-Process -FilePath $alias -ArgumentList "--self-test", "`"$out`"" -Wait -NoNewWindow
+          if (-not (Test-Path $out)) { throw "o app empacotado não gerou o autoteste" }
+          $r = Get-Content $out -Raw
+          Write-Host $r
+          $j = $r | ConvertFrom-Json
+          if (-not $j.edition.store) { throw "não é a edição Store" }
+          foreach ($t in "ffmpeg", "ffprobe", "whisper", "llama", "llama_gpu") {
+            if (-not $j.tools.$t) { throw "ferramenta ausente no pacote: $t" }
+            if ($j.tools.$t -notmatch 'WindowsApps') { throw "$t não veio do pacote: $($j.tools.$t)" }
+          }
+          if ($j.tools.ytdlp) { throw "yt-dlp não deveria estar na edição Store" }
+          if ($j.edition.link_download) { throw "o download por link deveria estar desligado nesta compilação" }
+          if (-not $j.license.required) { throw "a edição Store precisa exigir licença" }
+          Write-Host "Licença (pacote de teste, fora da Store): $($j.license.state) — $($j.license.message)"
+          & (Get-ChildItem $j.tools.ffmpeg).FullName -hide_banner -version | Select-Object -First 1
+      - name: Kit de Certificação de Aplicativos do Windows (WACK)
+        continue-on-error: true
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $appcert = "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\appcert.exe"
+          if (-not (Test-Path $appcert)) { Write-Warning "WACK não disponível neste runner"; exit 0 }
+          $pkg = Get-ChildItem out/store -Filter *TESTE-assinado.msix | Select-Object -First 1
+          & $appcert reset
+          & $appcert test -appxpackagepath $pkg.FullName -reportoutputpath "$PWD\out\store\wack-relatorio.xml"
+          if (Test-Path out/store/wack-relatorio.xml) {
+            [xml]$x = Get-Content out/store/wack-relatorio.xml
+            Write-Host "Resultado geral: $($x.REPORT.OVERALL_RESULT)"
+            $x.SelectNodes("//TEST") | ForEach-Object { "{0,-8} {1}" -f $_.RESULT.InnerText, $_.NAME } | Write-Host
+          }
+      - name: Enviar pacote da Store
+        uses: actions/upload-artifact@v4
+        with:
+          name: BWSmartClips-MicrosoftStore-MSIX
+          path: |
+            out/store/*.msix
+            out/store/*.cer
+            out/store/wack-relatorio.xml

@@ -1,0 +1,37 @@
+{
+  "_comment": "Ferramentas que vão DENTRO do pacote da Microsoft Store. Versões fixas, conferidas pelo SHA-256 publicado no GitHub. Para atualizar, troque url e sha256 (o CI mostra os valores atuais no teste live_release_lookup).",
+  "tools": [
+    {
+      "name": "ffmpeg",
+      "license": "GPL-3.0-or-later (build essentials de gyan.dev)",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.1/ffmpeg-9.1-essentials_build.zip",
+      "sha256": "b9bbbb3acece000cbeec994f856649354e52c773807841e78908374b24d658fd",
+      "dest": "",
+      "files": ["ffmpeg.exe", "ffprobe.exe", "LICENSE"]
+    },
+    {
+      "name": "whisper.cpp",
+      "license": "MIT",
+      "url": "https://github.com/ggml-org/whisper.cpp/releases/download/b5907/whisper-bin-x64.zip",
+      "sha256": "ecca07b277d943e9b9f4712856a144b857271a6b333104e511e1988e80db582b",
+      "dest": "whisper",
+      "files": ["whisper-cli.exe", "*.dll"]
+    },
+    {
+      "name": "llama.cpp",
+      "license": "MIT",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12835/llama-b12835-bin-win-cpu-x64.zip",
+      "sha256": "be1493ce6ea53672105edf5a821ea2dc7c812a8e596e1aa31347313699afb3e7",
+      "dest": "llama",
+      "files": ["llama-server.exe", "*.dll"]
+    },
+    {
+      "name": "llama.cpp (Vulkan)",
+      "license": "MIT",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12835/llama-b12835-bin-win-vulkan-x64.zip",
+      "sha256": "f6ed9c1f7ad2595047291fd71b895ce0a23103a0f24c4780ddfb2a31269139ec",
+      "dest": "llama-gpu",
+      "files": ["llama-server.exe", "*.dll"]
+    }
+  ]
+}
